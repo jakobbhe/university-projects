@@ -1,0 +1,1 @@
+Note: these projects should not be viewed as self-contained projects, since they have an exercise-like structure. 

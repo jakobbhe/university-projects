@@ -1,0 +1,336 @@
+--- 
+title: 'TMA4315: Compulsory exercise 1'
+subtitle: 'Group: Jakob Bergset Heide'
+date: "`r format(Sys.time(), '%d.%m.%Y')`"
+output:
+  pdf_document:
+    toc: no
+    toc_depth: '2'
+  html_document:
+    toc: no
+    toc_depth: '2'
+    df_print: paged
+---
+
+```{r setup, include = FALSE}
+library(formatR)
+showsol <- FALSE
+library(knitr)
+opts_chunk$set(tidy.opts = list(width.cutoff = 68), tidy = TRUE, warning = FALSE, error = FALSE, message = FALSE, echo = TRUE)
+```
+In this project, we will build a R package containing a similar implementation of the $\texttt{lm}$ function, called $\texttt{mylm}$. The $\texttt{mylm}$ function will be able to calculate coefficients with standard errors, as well as hypothesis testing using both z-tests and $\chi^2$-tests. In addition, the package will include a $\texttt{plot.mylm}$ function for plotting residuals vs fitted values, and the functions $\texttt{print.mylm}$ and $\texttt{summary.mylm}$, which will be similar to those of the standard $\texttt{lm}$.
+
+# Part 1
+
+## a)
+
+We start by importing the data and performing some explanatory data analysis.
+```{r}
+#install.packages("car")
+library(car)
+data(SLID, package = "carData")
+SLID <- SLID[complete.cases(SLID), ]
+
+summary(SLID)
+str(SLID)
+```
+
+We see that we have the following variables in our dataset:
+
+* ```wages```: hourly wage rate - a continuous variable with mean 15.54 and range (2.30,49.92).
+* ```education```: number of years of education - a continuous variable with mean 13.34 and range (0,20).
+* ```age```: years of age - integer-valued/continuous variable with mean 37.1 and range (16,69). 
+* ```sex```: gender - categorical variable with 2 levels: "Female","Male".
+* ```language```: categorical variable with 3 levels: "English","French","Other".
+
+We import the library $\texttt{ggplot}$ and use the $\texttt{ggpairs}$ function:
+```{r}
+library(GGally)
+ggpairs(SLID)
+```
+From the plot above, we can draw some conclusions:
+
+* There seems to be a slight correlation between ```wages``` and ```sex```. For ```Male```, the median and upper and lower quartiles are higher than for ```Female```.
+* We have slight positive correlations between ```wages``` and ```education```, as well as ```wages``` and ```age```, with correlations of 0.306 and 0.36, respectively. These numbers indicate a weak correlation.
+* On the diagonal of the plot, we can see the distribution of each variable. For example, we see that there are many more data points with ```English``` than ```French``` or ```Other```. In addition, we note that there are few data points with education less than 10 years.
+
+In order for our model to make sense, we need to make a few key assumptions about our data:
+
+* There exists a linear relationship between response and predictors, that is, $Y = \beta_0 + \beta_1x_1 + \cdots + \epsilon$
+* All observations are observed independently.
+* Design matrix $\mathbf{X}$ has full rank: else we cannot invert $(\mathbf{X}^T\mathbf{X})$ and find least squares estimate.
+* The error term $\epsilon$ is normally distributed with mean 0 and variance $\sigma^2 I$, where $I$ is the identity matrix.
+
+# Part 2
+We import the package $\texttt{mylm}$.
+```{r}
+library(mylm)
+```
+
+## a)
+We fit our first model, which is a simple linear regression with ```wages``` as response and ```education``` as the only covariate. We can estimate the coefficients $\beta$ by least squares, i.e.
+\begin{equation} \hat{\beta} = (\mathbf{X}^T\mathbf{X})^{-1}\mathbf{X}^T\end{equation}
+We compare the coefficient estimates from $\texttt{mylm}$ with the ones from $\texttt{mylm}$ using a $\texttt{print.mylm}$ function,
+```{r}
+model1 <- mylm(wages ~ education, data = SLID)
+print.mylm(model1)
+
+model1b <- lm(wages ~ education, data = SLID)
+print(model1b)
+```
+We find that the coefficient estimates are the same in both $\texttt{mylm}$ and $\texttt{lm}$. 
+
+## b)
+We develop the $\texttt{mylm}$ function further, so it can calculate the covariance matrix of the coefficient estimates as $\text{Cov}( \hat{\beta}) = \tilde{\sigma}^2(\mathbf{X}^T\mathbf{X})^{-1}$ Using this matrix, we can take the square root of the diagonal elements and get the standard errors of the coefficients. 
+```{r}
+summary.mylm(model1)
+```
+In the summary above, we have the following parameters:
+
+* Coefficient estimates: We have coefficient estimates for the intercept and ```education```. The interpretation is that if we increase ```education``` by 1 (and keep other covariates fixed), then the response will increase by the coefficient estimate of ```education```, in this case by 0.7923091. 
+* Standard errors: these are the estimated standard errors of the coefficient estimates, which we get from the square root of the diagonal elements of $\tilde{\sigma}^2(\mathbf{X}^T\mathbf{X})^{-1}$ (the covariance matrix of $\hat{\beta}$), where $\tilde{\sigma} = \frac{\text{SSE}}{n}.$ For example, in this model, the standard error of $\hat{\beta}_{education}$ is approximately 0.03905. 
+* z-values: these are the observed test statistics used in the z-test. We can use a z-test instead of a t-test when $n$ is asymptotically large, since the t-distribution then becomes a normal distribution. We calculate the z-statistics as $\frac{\hat{\beta}}{\sqrt{c_{jj}\tilde{\sigma}^2}}$, under the null hypothesis $H_0: \hat{\beta}_j = 0$, where $c_{jj}$ is the j-th diagonal element of $(\mathbf{X}^T\mathbf{X})^{-1}$.
+* p-values: the test statistic is normally distributed under $H_0$, and so we can calculate a p-value, which is essentially the probability of $H_0$ being true. For our case, we see that the p-values for the z-tests are low for both the intercept and ```education```, and therefore we reject $H_0$ in all cases.
+
+## c)
+We implement a $\texttt{plot.mylm}$ to create a scatter plot of residuals vs fitted values. The residuals of the model are calculated as $\epsilon = Y - \hat{Y}$.
+```{r}
+plot.mylm(model1)
+```
+We see from the plot that there is some increase in the spread of the residuals as the fitted values increase, which points to heteroscedasticity (variance is not constant as we assumed in the model). In addition, the residuals should have mean 0, but there seems to be more residuals in the region above 0 (although hard to tell from just looking at the plot).
+
+## d)
+We calculate the sum-of-squares error (SSE), total sum-of-squares (SST), and sum-of-squares regression (SSR) using the following formulas:
+
+* $\text{SSE} = Y^T(I - H)Y$, where $H = \mathbf{X}(\mathbf{X}^T\mathbf{X})^{-1}\mathbf{X}^T$
+* $\text{SSR} = Y^T(H - \frac{1}{n}\mathbf{1}\mathbf{1})Y$
+* $\text{SST} = \text{SSR} + \text{SSE}$
+
+In addition, we can test the hypothesis $H_0: \beta_1 = \beta_2 = \cdots = \beta_k = 0$, which a test on the significance of the regression. We use the asymptotic $\chi^2$-test with the test statistic $rF_{r,n-p}$, where
+$$F_{r,n-p} = \frac{\frac{1}{r}(\text{SST} - \text{SSE})}{\frac{SSE}{n-p}}$$
+
+```{r}
+cat("SSE: ", model1$SSE)
+cat("\nSST: ", model1$SST)
+
+#Critical values for z-test, with significance level 0.05
+cat("Lower:",qnorm(0.025))
+cat("Upper:",qnorm(0.025,lower.tail = FALSE))
+
+#Critical value for X^2-test, with significance level 0.05
+cat("Lower:",qchisq(0.05,df = model1$k,lower.tail = FALSE))
+summary.mylm(model1)
+```
+In the summary, we see the chi-square test (labelled as F-test) gives a p-value of approximately 0, which deems the regression significant. We also see that this model has $n-p = 3985$ degrees of freedom. For simple linear regression, the z-statistic squared is identical to the $\chi^2$-statistic. 
+
+## e)
+The $R^2$ is calculated as $\frac{\text{SSR}}{\text{SST}}$.
+```{r}
+cat("R^2: ", model1$R2)
+```
+The $R^2$ value tells us the proportion of the variance that is explained by the model.
+
+# Part 3
+We move on to multiple linear regression. We fit a model with ```wages``` as the response and ```education``` and ```age``` as the covariates. 
+
+## a)
+```{r}
+model2 <- mylm(wages ~ age + education, data = SLID)
+```
+
+## b) 
+```{r}
+summary.mylm(model2)
+```
+In the summary above, we see that the z-tests for the coefficients intercept, ```age``` and ```education``` all give p-values close to 0, which deems the coefficients significant. The chi-test also indicates that the regression is significant.
+
+## c)
+The parameter estimates change because in the simple models we try to explain the response using only one variable. When we add another covariate, there might be some relation between the covariates - multicollinearity. We can fit the models and check the coefficients:
+```{r}
+model2a <- mylm(wages ~ age,data = SLID)
+print.mylm(model1) #Only education
+print.mylm(model2a) #Only age
+print.mylm(model2) #Age + education
+```
+We see that there is a slight change in the coefficient estimates. We can calculate the correlation between the two covariates using the covariance matrix of $\hat{\beta}$:
+```{r}
+print(model2$beta.matrix)
+cat("The correlation between education and age is: ", model2$beta.matrix[3,2]/(model2$std.errors[2]*model2$std.errors[3]))
+```
+The value of 0.106279 indicates a weak correlation between age and education - which might explain the change in coefficient estimates from the two simple models to the one multiple.
+
+# Part 4
+
+We fit a few different models, and check the various parameters and plots for each model. The first model we fit is a model with ```wages``` against ```sex```, ```language```, ```age``` and ```education^2```. To handle the multiple classes of ```language```, we employ dummy variable coding.
+```{r}
+model4a <- mylm(wages ~ sex + language + age + I(education^2), data = SLID, contrasts = list(language="contr.treatment")) #Dummy variable coding
+summary.mylm(model4a)
+```
+From the output of $\texttt{summary.mylm}$, we see that the z-tests of the coefficients deem the covariates ```sexMale```, ```age``` and ```education^2``` as statistically significant, while the covariates ```languageFrench``` and ```languageOther``` are not, with p-values 0.859 and 0.677, respectively. The $\chi^2$-test deems the regression significant. The model explains 30% of the variance. A plot of the residuals vs fitted values is shown below:
+```{r}
+plot.mylm(model4a)
+```
+There is a clear trend in the plot, which is the slope that starts from zero residuals and travels downwards with increasing fitted values. 
+
+We fit a new model with the covariates ```language```, ```age``` and the interaction between these two.
+```{r}
+model4b <- mylm(wages ~ language + age + language:age, data = SLID, contrasts = list(language = "contr.treatment"))
+summary.mylm(model4b)
+```
+We see that the interaction ```languageFrench:age``` is deemed significant (with significance level $\alpha = 0.05$), with a p-value of 0.0379. ```age``` is also significant, while the other covariates are not. The regression is significant, and explains 13% of the variation in the data.
+
+We fit a new model with the covariate ```education```, and remove the intercept. When we remove the intercept, we ensure that the regression line passes through the origin (if education is 0, then the wages will also be zero, in this case).
+```{r}
+model4c <- mylm(wages ~ education - 1, data = SLID)
+summary.mylm(model4c)
+```
+The only covariate education is significant, with a z-statistic of 130.8 and p-value approximately 0. The regression is significant from the $\chi^2$-test.
+
+The residual plots in the three models above all point toward heteroscedasticity, which violates our assumption of constant variance. A common way of handling this is with a transformation of the response. In our case, taking the log of the response seems to improve the plots, which we show by transforming the first of our three models:
+```{r}
+model4a_transformed <- mylm(I(log(wages)) ~ sex + language + age + I(education^2), data = SLID, contrasts = list(language="contr.treatment"))
+plot.mylm(model4a_transformed)
+```
+
+
+The code for $\texttt{mylm}$ is found below.
+```{r,eval = FALSE}
+# Select Build, Build and reload to build and lode into the R-session.
+
+mylm <- function(formula, data = list(), contrasts = NULL, ...){
+  # Extract model matrix & responses
+  mf <- model.frame(formula = formula, data = data)
+  X  <- model.matrix(attr(mf, "terms"), data = mf, contrasts.arg = contrasts)
+  y  <- model.response(mf)
+  terms <- attr(mf, "terms")
+
+  # Code to calculate coefficients, residuals, fitted values, etc...
+  n = dim(X)[1]
+  p = dim(X)[2]
+  XTX_inv = solve(t(X) %*% X)
+  beta = XTX_inv %*% t(X) %*% y #Coefficient estimates; least squares
+  SSE = t(y - X %*% beta) %*% (y - X %*% beta)
+  biased_estimator = as.numeric(SSE/n)
+  REML_estimator = as.numeric(SSE/(n - p)) #Unbiased
+  beta_cov = biased_estimator * XTX_inv #Covariance matrix of beta-hat
+  std_errors = sqrt(diag(beta_cov))
+
+  #Hypothesis testing for coefficients
+  z_value = beta/std_errors #Observed z-values under H_0, which are standard normally dist.
+  p_value = 2 * pnorm(abs(z_value),lower.tail = FALSE) #z-test
+
+  #Residuals
+  H = X %*% XTX_inv %*% t(X)
+  y_hat = H %*% y
+  residual = y - y_hat
+
+  #SST, SSR
+  ones = rep(1,n)
+  SSR = as.numeric(t(y) %*% (H - (1/n) * ones %*% t(ones)) %*% y)
+  SST = SSR + SSE
+  R2 = SSR/SST
+
+  #Testing significance of regression with chi-square test
+  k = length(beta)-1
+  chi_obs = (SST - SSE)/(SSE/(n-p)) #Approx. chi-square distributed (normalised)
+  p_value_chi = pchisq(chi_obs,df = k,lower.tail = FALSE)
+
+  # and store the results in the list est
+  est <- list(terms = terms, model = mf)
+  est$coeffs <- beta
+  est$beta.matrix <- beta_cov
+  est$std.errors <- std_errors
+  est$z.values <- z_value
+  est$p.values <- p_value
+  est$residuals <- residual
+  est$y.hat <- y_hat
+  est$SSE <- SSE
+  est$SST <- SST
+  est$SSR <- SSR
+  est$df <- n - p
+  est$chi.value <- chi_obs
+  est$p.value.chi <- p_value_chi
+  est$R2 <- R2
+  est$k <- k
+  est$colnames <- colnames(X)
+
+  # Store call and formula used
+  est$call <- match.call()
+  est$formula <- formula
+
+  # Set class name. This is very important!
+  class(est) <- "mylm"
+
+  # Return the object with all results
+  return(est)
+}
+
+print.mylm <- function(object){
+  # Code here is used when print(object) is used on objects of class "mylm"
+  # Useful functions include cat, print.default and format
+
+  cat('Info about object\n')
+  print("Coefficients:")
+  cat(object$colnames, "\n")
+  cat(object$coeffs, "\n")
+}
+
+summary.mylm <- function(object, ...){
+  # Code here is used when summary(object) is used on objects of class "mylm"
+  # Useful functions include cat, print.default and format
+  cat('Summary of object\n')
+  print("Coefficients:")
+  cat(object$colnames, "\n")
+  cat(object$coeffs, "\n")
+  print("Std.errors")
+  print(object$std.errors)
+  print("z-values")
+  print(object$z.values)
+  print("p-values")
+  print(object$p.values)
+  cat("Chi-test on ",object$k, " df: ", object$chi.value, " with p-value: ", object$p.value.chi)
+  cat("\nR^2: ", object$R2)
+
+}
+
+plot.mylm <- function(object, ...){
+  # Code here is used when plot(object) is used on objects of class "mylm"
+  plot(object$y.hat,object$residuals,main = "Residuals vs fitted values",xlab = "fitted values",ylab = "residuals")
+}
+
+# This part is optional! You do not have to implement anova
+anova.mylm <- function(object, ...){
+  # Code here is used when anova(object) is used on objects of class "mylm"
+
+  # Components to test
+  comp <- attr(object$terms, "term.labels")
+
+  # Name of response
+  response <- deparse(object$terms[[2]])
+
+  # Fit the sequence of models
+  txtFormula <- paste(response, "~", sep = "")
+  model <- list()
+  for(numComp in 1:length(comp)){
+    if(numComp == 1){
+      txtFormula <- paste(txtFormula, comp[numComp])
+    }
+    else{
+      txtFormula <- paste(txtFormula, comp[numComp], sep = "+")
+    }
+    formula <- formula(txtFormula)
+    model[[numComp]] <- lm(formula = formula, data = object$model)
+  }
+
+  # Print Analysis of Variance Table
+  cat('Analysis of Variance Table\n')
+  cat(c('Response: ', response, '\n'), sep = '')
+  cat('          Df  Sum sq X2 value Pr(>X2)\n')
+  for(numComp in 1:length(comp)){
+    # Add code to print the line for each model tested
+  }
+
+  return(model)
+}
+```
+
