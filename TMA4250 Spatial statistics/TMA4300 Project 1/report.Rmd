@@ -1,0 +1,786 @@
+---
+title: "TMA4300 Project 1"
+author: "Jakob Heide, Bendik Waade"
+date: '`r format(Sys.Date(), "%b %d, %Y")`'
+header-includes:
+   - \usepackage{subfig}
+output:
+  pdf_document:
+    fig_caption: yes        
+    includes:  
+      in_header: my_header.tex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#install.packages("geoR") #For covariance functions
+#install.packages("akima")
+#install.packages("fields")
+library("geoR")
+library("pracma")
+library("MASS")
+library("ggplot2")
+library("ggpubr")
+library("akima")
+library("fields")
+```
+
+# Part 1: GRFs - model characteristics
+Let $X$ be a stationary GRF on $\mathcal{D} = [0,50] \in \mathbb{R}$, with 
+\begin{align*}
+&\text{E}[X(s)] = 0, \ s \in \mathcal{D}, \\
+&\text{Var}[X(s)] = \sigma^2, \ s \in \mathcal{D} \\
+&\text{Corr}[X(s),X(s')] = \rho(\| s - s' \|), \ s,s' \in \mathcal{D}
+\end{align*}
+
+## Correlation functions and semi-variograms
+The correlation function is a \textit{positive semi-definite} function if it satisfies
+\begin{align*}\forall m \in \mathbb{N}, \forall a_1,\dots,a_m \in \mathbb{R}, \forall s_1,\dots,s_m \in \mathcal{D} \\ \sum_{i=1}^m\sum_{j=1}^m a_ia_j\rho(\|s_i-s_j\|) \geq 0
+\end{align*}
+This is a necessary requirement for any correlation function. To see this, we note that $\rho(\| s - s'\|) = c(s,s')/\sigma^2$, where $\sigma^2$ is the marginal variance. The requirement above becomes 
+$$\frac{1}{\sigma^2}\sum_{i=1}^m\sum_{j=1}^m a_ia_jc(s_i,s_j) = \frac{1}{\sigma^2}\mathbf{a}^T\text{Var}(\mathbf{X})\mathbf{a} \\
+= \frac{1}{\sigma^2}\text{Var}\left(\sum_{i=1}^m a_iX(s_i)\right) \geq 0$$
+where $\mathbf{a}^T = (a_1,\dots,a_m)$ and $\mathbf{X} = (X(s_1),\dots,X(s_m))^T$. Hence, the requirement on the correlation function to be positive semi-definite is the same as requiring that the covariance matrix of any set of points is positive semi-definite, or rather, that the variance of any linear combination is non-negative. 
+
+In Figure \ref{fig:cor_functions}a, the isotropic powered exponential correlation function is shown, which has the form
+\begin{equation}
+\rho_0(h) = \exp(-(h/a)^\alpha) , \ h > 0
+\label{eq:powered_exponential}
+\end{equation}
+where $a > 0$ is called the spatial scale and $0 < \alpha \leq 2$ is called the power. In Figure \ref{fig:cor_functions}b, the isotropic Matérn correlation function is shown, which has the form 
+\begin{equation}
+\rho_0(h) = \frac{2^{1-\nu}}{\Gamma (\nu)} \left(\frac{h}{a}\right)^\nu K_{\nu}\left(\frac{h}{a}\right), \ h > 0
+\label{eq:matern}
+\end{equation}
+where $K_\nu$ is the modified Bessel function of order $\nu$.  The parameter $a$ is called the power and the parameter $\nu$ is called the smoothness. Note that there are several parametrizations of the Matérn, e.g.
+\begin{equation*}
+\rho_0(h) = \frac{2^{1-\nu}}{\Gamma (\nu)} \left(\frac{\sqrt{8\nu}h}{a}\right)^\nu K_\nu \left(\frac{\sqrt{8\nu}h}{a}\right) , \ h > 0
+\end{equation*}
+is another parametrization. 
+\footnotesize
+```{r cor_functions,fig.cap='Correlation functions', fig.subcap=c("Powered exponential", 'Matérn'), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+h <- seq(0,25,length.out = 100)
+
+powered_exp <- function(h,sigma, a, alpha){
+  return (cov.spatial(h,cov.model = "powered.exponential",cov.pars = c(sigma,a),kappa = alpha))
+}
+matern <- function(h, sigma,a, ny){
+  return (cov.spatial(h,cov.model = "matern",cov.pars = c(sigma,a),kappa = ny))
+}
+
+#Plotting the powered exponential correlation function. cov.pars(marginal variance sigma, range parameter phi), kappa = power parameter
+plot(h,powered_exp(h,1,10,1),col = "red",main = "",ylab = "Correlation",xlab = "h",type = "l",lty = "dashed",lwd = 2,ylim = c(0,1))
+
+lines(h,powered_exp(h,1,10,1.9),col = "orange",lty = "dashed",lwd = 2)
+
+legend("topright", legend=c(expression(a == 10 ~ "," ~ alpha == 1 ),expression(a == 10 ~","~alpha == 1.9)), col=c("red","orange"), lty = "dashed", cex = 1, lw=2, inset=0.1, box.lty=0)
+
+#Plotting the Matérn correlation function
+h <- seq(0,150,length.out = 100)
+plot(h,matern(h,1,20,1), col = "red",main = "",ylab = "Correlation",xlab = "h",type = "l",lty = "dashed",lwd = 2,ylim = c(0,1))
+
+lines(h,matern(h,1,20,3),col = "orange",lty = "dashed",lwd = 2)
+
+legend("topright", legend=c(expression(nu == 1~","~a == 20),expression(nu == 3~","~a == 20)), col=c("red","orange"), lty = "dashed", cex = 1, lw=2, inset=0.1, box.lty=0)
+
+```
+\normalsize
+For the powered exponential, we see that increasing the parameter $\alpha$ increases the correlation between points that are less than $a$ away, but it decreases the correlation for points that are more than $a$ away. For the Matérn, we see that increasing the parameter $\nu$ increases the correlation between all points.
+Another crucial feature of the spatial correlation function is the differentiability. The powered exponential correlation function is not differentiable for either of the parameter sets $({a,\alpha}) \in \{(10,1),(10,1.9\}$. To see this, we write the isotropic correlation function as
+$$\rho_0(|h|) = \exp(-(|h|/a)^\alpha), \ h \in \mathbb{R}$$
+which has a sharp point in $h = 0$. On the other hand, a GRF with the Matérn correlation function is $\lceil \nu \rceil - 1$ times differentiable, so we expect the Matérn with $\nu = 3$ to produce realizations which are $2$ times differentiable. 
+
+The \textit{semi-variogram} is defined as 
+$$\gamma(h) = \frac{1}{2}\text{Var}(X(h) - X(0))$$
+which we can express as 
+$$\gamma(h) = C(0) - C(h) \\ = \sigma^2 (1-\rho_0(h)), \ h > 0$$
+If we multiply the correlation functions in Equation \eqref{eq:powered_exponential} and \eqref{eq:matern} by the marginal variance $\sigma^2$, we obtain the corresponding stationary covariance functions. Let $\sigma^2 \in \{1,5\}$, which gives in total eight semi-variograms for the functions in Figure \ref{fig:cor_functions}, which are shown in Figure \ref{fig:semi_var_exp}.
+```{r semi_var_exp,fig.cap='Semi-variograms using the powered exponential', fig.subcap=c("$\\sigma^2 = 1$", "$\\sigma^2 = 5$"), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+#Defining the semi-variogram
+semi_variogram <- function(h,cov_function,...){
+  return (cov_function(0,...) - cov_function(h,...))
+}
+
+h <- seq(0,50,length.out = 100)
+
+#Powered exponential: sigma = 1, a = 10, alpha = 1
+plot(h,semi_variogram(h,powered_exp,1,10,1),ylab = "Semi-variogram",xlab = "h",type = "l", lty="dashed",lwd = 2,col = "red",main = "")
+
+#sigma = 1, a = 10, alpha = 1.9
+lines(h,semi_variogram(h,powered_exp,1,10,1.9),lty = "dashed",lwd = 2,col = "orange")
+
+legend("topright", legend=c(expression(a == 10 ~ "," ~ alpha == 1 ),expression(a == 10 ~","~alpha == 1.9)), col=c("red","orange"), lty = "dashed", cex = 1, lw=2, inset=0.1, box.lty=0)
+
+#Powered exponential: sigma = 5, a = 10, alpha = 1
+plot(h,semi_variogram(h,powered_exp,5,10,1),ylab = "Semi-variogram",xlab = "h",type = "l", lty="dashed",lwd = 2,col = "red",main = "")
+
+#sigma = 5, a = 10, alpha = 1.9
+lines(h,semi_variogram(h,powered_exp,5,10,1.9),lty = "dashed",lwd = 2,col = "orange")
+
+legend("topright", legend=c(expression(a == 10 ~ "," ~ alpha == 1),expression(a == 10 ~","~alpha == 1.9)), col=c("red","orange"), lty = "dashed", cex = 1, lw=2, inset=0.1, box.lty=0)
+```
+```{r semi_var_mat,fig.cap='Semi-variograms using the Matérn', fig.subcap=c("$\\sigma^2 = 1$", "$\\sigma^2 = 5$"), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+h <- seq(0,150,length.out = 100)
+#Matern: sigma = 1, a = 20, ny = 1
+plot(h,semi_variogram(h,matern,1,20,1),ylab = "Semi-variogram",xlab = "h",type = "l", lty="dashed",lwd = 2,col = "red",main = "")
+
+#sigma = 1, a = 20, ny = 3
+lines(h,semi_variogram(h,matern,1,20,3),lty = "dashed",lwd = 2,col = "orange")
+
+legend("topright", legend=c(expression(nu == 1~","~a == 20),expression(nu == 3~","~a == 20)), col=c("red","orange"), lty = "dashed", cex = 1, lw=2, inset=0.1, box.lty=0)
+
+#Matern: sigma = 5, a = 20, ny = 1
+plot(h,semi_variogram(h,matern,5,20,1),ylab = "Semi-variogram",xlab = "h",type = "l", lty="dashed",lwd = 2,col = "red",main = "")
+
+#sigma = 5, a = 20, ny = 3
+lines(h,semi_variogram(h,matern,5,20,3),lty = "dashed",lwd = 2,col = "orange")
+
+legend("topright", legend=c(expression(nu == 1~","~a == 20),expression(nu == 3~","~a == 20)), col=c("red","orange"), lty = "dashed", cex = 1, lw=2, inset=0.1, box.lty=0)
+```
+Semi-variograms are mostly used for exploratory analysis and can be used to estimate the sill, nugget and range. In the case of the both the powered exponential and the Matérn, we see that the semi-variograms grow toward the value of the marginal variance $\sigma^2$, which is also the sill in this case. Increasing the parameter $\alpha$ in the powered exponential increases the range, as seen in Figure \ref{fig:semi_var_exp}a,b. Increasing the parameter $\nu$ in the Matérn also increases the range, as seen in Figure \ref{fig:semi_var_mat}a,b.
+
+## Realizations
+The expected value of $\mathbf{X} = (X(1),X(2),\dots,X(50))^T$ is the vector $\mathbf{\mu} = (0,\dots,0)^T$, since $X$ is a centred GRF. We denote the variance of $\mathbf{X}$ as $\Sigma = \text{Var}(\mathbf{X})$, where $\Sigma_{ij} = C_0(\|i - j\|) = \sigma^2 \rho(\|i - j\|)$, for $i,j = 1,\dots,50$. The distribution of $\mathbf{X}$ is thus
+$$\mathbf{X} \sim N_{50}(\mathbf{0},\Sigma)$$
+
+We can now simulate realizations of $\mathbf{X}$ with both the powered exponential covariance function and the Matérn covariance function, for the eight different sets of parameters used above. Four realizations for each of the sets of parameters are shown in Figure \ref{fig:realizations_exp} (the powered exponential) and in Figure \ref{fig:realizations_mat} (the Matérn). 
+```{r,echo =F}
+create_covariance_matrix <- function(h,cov_function,...){
+  #Function to create \Sigma. #Uses the toeplitz() function from "pracma" 
+  cov_vec <- sapply(h,cov_function,...)
+  return (toeplitz(cov_vec))
+}
+
+distances <- seq(0,49,1)
+mu <- numeric(50)
+
+set.seed(10)
+#Powered exponential: sigma = 1, a = 10, alpha = 1
+Sigma <- create_covariance_matrix(distances, powered_exp,1,10,1)
+
+pow_exp1 <- mvrnorm(4,mu,Sigma)
+#Powered exponential: sigma = 1, a = 10, alpha = 1.9
+Sigma <- create_covariance_matrix(distances, powered_exp,1,10,1.9)
+
+pow_exp2 <- mvrnorm(4,mu,Sigma)
+#Powered exponential: sigma = 5, a = 10, alpha = 1
+Sigma <- create_covariance_matrix(distances, powered_exp,5,10,1)
+
+pow_exp3 <- mvrnorm(4,mu,Sigma)
+#Powered exponential: sigma = 5, a = 10, alpha = 1.9
+Sigma <- create_covariance_matrix(distances, powered_exp,5,10,1.9)
+
+pow_exp4 <- mvrnorm(4,mu,Sigma)
+
+#Matern: sigma = 1, a = 20, ny = 1
+Sigma <- create_covariance_matrix(distances, matern, 1, 20, 1)
+
+mat1 <- mvrnorm(4,mu,Sigma)
+#Matern: sigma = 1, a = 20, ny = 3
+Sigma <- create_covariance_matrix(distances, matern, 1, 20, 3)
+
+mat2 <- mvrnorm(4,mu,Sigma)
+#Matern: sigma = 5, a = 20, ny = 1
+Sigma <- create_covariance_matrix(distances, matern, 5, 20, 1)
+
+mat3 <- mvrnorm(4,mu,Sigma)
+#Matern: sigma = 5, a = 20, ny = 3
+Sigma <- create_covariance_matrix(distances, matern, 5, 20, 3)
+
+mat4 <- mvrnorm(4,mu,Sigma)
+
+```
+```{r realizations_exp,fig.cap='Realizations using the powered exponential',fig.subcap= c("","","",""), out.width='.45\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+matplot(t(pow_exp1), type = "l",ylab = "X(s)",xlab = "s",main = expression(sigma^2 == 1~", "~a == 10~", "~alpha ==  1),lwd = 2)
+matplot(t(pow_exp2),type = "l",ylab = "X(s)",xlab = "s",main = expression(sigma^2 == 1~", "~a == 10~", "~alpha ==  1.9),lwd = 2)
+matplot(t(pow_exp3),type = "l",ylab = "X(s)",xlab = "s",main = expression(sigma^2 == 5~", "~a == 10~", "~alpha ==  1),lwd = 2)
+matplot(t(pow_exp4),type = "l",ylab = "X(s)",xlab = "s",main = expression(sigma^2 == 5~", "~a == 10~", "~alpha ==  1.9),lwd = 2)
+```
+```{r realizations_mat,fig.cap='Realizations using the Matérn',fig.subcap= c("","","",""), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+matplot(t(mat1),type = "l",ylab = "X(s)",xlab = "s",main = expression(sigma == 1~", "~a == 20~", "~nu ==  1),lwd = 2)
+matplot(t(mat2),type = "l",ylab = "X(s)",xlab = "s",main = expression(sigma == 1~", "~a == 20~", "~nu ==  3),lwd = 2)
+matplot(t(mat3),type = "l",ylab = "X(s)",xlab = "s",main = expression(sigma == 5~", "~a == 20~", "~nu ==  1),lwd = 2)
+matplot(t(mat4),type = "l",ylab = "X(s)",xlab = "s",main = expression(sigma == 5~", "~a == 20~", "~nu ==  3),lwd = 2)
+```
+We see that the realizations in Figure \ref{fig:realizations_mat}b and \ref{fig:realizations_mat}d are the smoothest - the smoothness parameter $\nu = 3$ indicates that X should be 2 times differentiable. In Figure \ref{fig:realizations_exp}, we see the effect of the power parameter $\alpha$. In \ref{fig:realizations_exp}a and \ref{fig:realizations_exp}c, the realizations fluctuate more over smaller intervals than in \ref{fig:realizations_exp}b and \ref{fig:realizations_exp}d. Increasing the parameter $\alpha$ will give a higher covariance with points that are less than $a$ away, and smaller covariance with the points that are further than $a$ away, which effectively restricts the small-scale fluctuations. An increase in the marginal variance parameter $\sigma^2$ increases the large-scale fluctuations. 
+
+## Observation model distribution
+Consider the observation model
+$$Y_i = X(s_i) + \epsilon_i, \ i = 1,2,3, $$
+where $\epsilon_i \sim N(0,\sigma_N^2)$ are i.i.d. and independent of $X$, and $(s_1,s_2,s_3) = (10,25,30)$. $\sigma_N^2$ is the nugget variance. 
+The expected value of $\mathbf{Y} = (Y_1,Y_2,Y_3)^T$ is 
+$$\text{E}[\mathbf{Y}] = (\text{E}[X(s_1)+\epsilon_1],\text{E}[X(s_2)+\epsilon_2],\text{E}[X(s_3)+\epsilon_3])^T \\
+= (0,0,0)^T$$
+and the variance of $\mathbf{Y}$ is 
+$$\text{Var}(\mathbf{Y}) = \Sigma_\mathbf{Y} = [\text{Cov}(Y_i,Y_j)]_{i,j = 1,2,3}$$
+where $\text{Cov}(Y_i,Y_j) = \sigma^2 + \sigma_N^2$ for $i = j$ and $\text{Cov}(Y_i, Y_j) = C_0(|s_i-s_j|) = \sigma^2 \rho_0(|s_i-s_j|)$ for $i \neq j$. Since $X(s_i)$ is normally distributed, $Y_i$ is also normally distributed, and the distribution of $\mathbf{Y}$ is 
+$$\mathbf{Y} \sim N_3(\mathbf{0},\Sigma_{\mathbf{Y}})$$
+
+## Conditional distribution and the best linear unbiased predictor
+Since $\mathbf{X}$ and $\mathbf{Y}$ are normal, so is the conditional distribution $\mathbf{X} | \mathbf{Y} = \mathbf{y}$. The expected value of $\mathbf{X} | \mathbf{Y} = \mathbf{y}$ is
+$$\text{E}[\mathbf{X} | \mathbf{Y} = \mathbf{y}] = \Sigma_{12}\Sigma_{22}^{-1}\mathbf{y}$$
+where we have constructed the multivariate normal vector
+$$\mathbf{Z} = \begin{pmatrix}\mathbf{X} \\ \mathbf{Y}\end{pmatrix}, \ \text{with} \ \text{E}(\mathbf{Z}) = 0, \ \text{Var}(\mathbf{Z}) = \begin{pmatrix}\Sigma_{11} & \Sigma_{12} \\  \Sigma_{21} & \Sigma_{22}\end{pmatrix}$$
+The variance is 
+$$\text{Var}(\mathbf{X} | \mathbf{Y} = \mathbf{y}) = \Sigma_{11} - \Sigma_{12}\Sigma_{22}^{-1}\Sigma_{21}$$
+$\Sigma_{11}$ is the covariance matrix of $\mathbf{X}$, and $\Sigma_{22}$ is the covariance matrix of $\mathbf{Y}$, both of which we have already seen how to calculate. To calculate $\Sigma_{12}$ and $\Sigma_{21}$, we use the definition of covariance to find
+$$\Sigma_{12} = \text{Cov}(\mathbf{X},\mathbf{Y}) = \text{E}(\mathbf{X}\mathbf{Y}^T) = [C_0(|i - s_j|)]_{i = 1,\dots,50, \ j = 1,2,3,}$$
+that is, a $50\times3$ matrix. Since the covariance function is isotropic, we note that $\Sigma_{12} = \Sigma_{21}^T$.
+To predict $X$ based on the observations $\mathbf{Y} = \mathbf{y}$, we consider the \textit{best linear unbiased predictor}, also known as the Simple Kriging predictor, which takes the form
+\begin{equation}\hat{\mathbf{X}} = \Sigma_{12}\Sigma_{22}^{-1}\mathbf{y}, \ \text{with } \text{Cov}(\hat{\mathbf{X}}-\mathbf{X}) = \Sigma_{11} - \Sigma_{12}\Sigma_{22}^{-1}\Sigma_{21}
+\label{eq:blup}
+\end{equation}
+which coincides with the conditional expectation and variance - this is due to $X$ being a GRF. We extract the values at $s_1,s_2,s_3$ from one of the realizations in Figure \ref{fig:realizations_mat}d and use these as our observations $\mathbf{y}$, i.e. we use the Matérn covariance function with $\sigma^2 = 5, a = 20$, and $\nu = 3$. Since we know the mean and variance, we can use that the test observer
+$$Z = \frac{(\mathbf{X}|\mathbf{Y} = \mathbf{y})  - \text{E}(\mathbf{X}|\mathbf{Y} = \mathbf{y})}{\sqrt{\text{Var}(\mathbf{X}|\mathbf{Y} = \mathbf{y})}}$$
+is standard normal, so the $90$% prediction interval becomes
+$$\mathbf{\hat{X}} \pm 1.645\sqrt{\Sigma_{11} - \Sigma_{12}\Sigma_{22}^{-1}\Sigma_{21}}$$
+In Figure \ref{fig:blup}, the best linear unbiased predictor for $X$ is shown, along with 90% prediction intervals, for the two cases of $\sigma_N^2 \in \{0,0.25\}$. 
+```{r ,echo = F}
+y <- c(mat4[1,10],mat4[1,25],mat4[1,30]) #Extract values at s1,s2,s3, and use as observations
+
+#Setup the covariance matrices 
+#We choose the cov model Matern with sigma = 5, a = 20, ny = 3
+sigma_11 <- Sigma
+
+sigma_nugget <- 0
+sigma_22 <- sigma_11[c(10,25,30),c(10,25,30)] + diag(sigma_nugget,nrow = 3)
+
+sigma_12 <- matrix(c(sigma_11[,10],sigma_11[,25],sigma_11[,30]),nrow = 50,ncol = 3)
+
+sigma_21 <- t(sigma_12)
+
+sigma_22_inv <- solve(sigma_22)
+
+blup <- sigma_12 %*% sigma_22_inv %*% y
+
+cov_pred <- sigma_11 - sigma_12 %*% sigma_22_inv %*% sigma_21
+var_pred <- diag(cov_pred)
+
+sigma_nugget <- 0.25
+sigma_22_2 <- sigma_11[c(10,25,30),c(10,25,30)] + diag(sigma_nugget,nrow = 3)
+
+sigma_22_inv_2 <- solve(sigma_22_2)
+blup_2 <- sigma_12 %*% sigma_22_inv_2 %*% y
+
+cov_pred_2 <- sigma_11 - sigma_12 %*% sigma_22_inv_2 %*% sigma_21
+var_pred_2 <- diag(cov_pred_2)
+```
+```{r blup,fig.cap='Best linear unbiased predictor with prediction intervals', fig.subcap=c("$\\sigma_N^2 = 0$", "$\\sigma_N^2 = 0.25$"), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+
+x <- seq(1,50,1)
+plot(x,blup,type = "l",main = "",ylab = "response",xlab = "s",ylim = c(-2,1))
+lines(x,blup + 1.645*sqrt(var_pred),col = "blue")
+lines(x,blup - 1.645*sqrt(var_pred),col = "blue")
+points(c(10,25,30),y,col = "red")
+
+plot(x,blup_2,type = "l", main = "",ylim = c(-2,1),ylab = "response",xlab = "s")
+lines(x,blup_2 + 1.645*sqrt(var_pred_2),col = "blue")
+lines(x,blup_2 - 1.645*sqrt(var_pred_2),col = "blue")
+points(c(10,25,30),y,col = "red")
+
+```
+In Figure \ref{fig:blup}a, we see that when there is no nugget variance, the best linear unbiased prediction fits to the data points exactly. The prediction intervals also get smaller as the prediction approaches a data point, and they become larger as the prediction moves away from a data point. In Figure \ref{fig:blup}b, a nugget variance $\sigma = 0.25$ is introduced, so that the prediction no longer intersects the data points. As a consequence, the prediction intervals become much wider - however, they still narrow slightly when the prediction approaches the data points. 
+
+Since $X$ should be two times differentiable due to the parameter $\nu = 3$, we expect the prediction intervals to be more narrow than in the case of e.g. $\nu = 1$, since the functions produced would then be allowed to fluctuate more. In fact, we already saw this tendency in Figure \ref{fig:realizations_mat}a and b.
+
+## Empirical estimates
+We simulate $100$ realizations of $\mathbf{X}$ given $\mathbf{Y} = \mathbf{y}$, and calculate the sample mean and variance, which we can view as empirical estimates of Equation \eqref{eq:blup}. We denote by $\bar{X}$ the sample mean, that is,
+$$\bar{X} = \frac{1}{n}\sum_{i = 1}^n\mathbf{X}_i$$
+where $\mathbf{X}_i$ are the different realizations. Since we use the sample mean and variance, we use the test observer
+$$T = \frac{X - \bar{X}}{\sqrt{\text{Var}(\bar{X})(1-\frac{1}{n})}}$$
+which is $t$-distributed with $99$ degrees of freedom. The 90% prediction interval is then
+$$\bar{X} \pm 1.660 \sqrt{\text{Var}(\bar{X})(1-\frac{1}{n})}$$
+```{r empirical_blup,fig.cap='100 realizations with estimated prediction and estimated prediction intervals', fig.subcap=c("$\\sigma_N^2 = 0$", "$\\sigma_N^2 = 0.25$"), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+
+realizations <- mvrnorm(n = 100, blup,cov_pred) #No nugget variance
+realizations_2 <- mvrnorm(n = 100, blup_2,cov_pred_2) #With nugget variance = 0.25
+
+matplot(t(realizations), type = "l",col = "grey",ylim = c(-2,1),ylab = "response", xlab = "s")
+mean_val <- colMeans(realizations)
+lines(x,mean_val,col = "black",lwd = 2)
+lines(x,mean_val + 1.645*sqrt(apply(realizations,2,var)),col = "blue",lwd = 2)
+lines(x,mean_val - 1.645*sqrt(apply(realizations,2,var)),col = "blue",lwd = 2)
+
+matplot(t(realizations_2),type = "l",col = "grey",ylim = c(-2,1),ylab = "response", xlab = "s")
+mean_val_2 <- colMeans(realizations_2)
+lines(x,mean_val_2,col = "black",lwd = 2)
+lines(x,mean_val_2 + 1.66*sqrt(apply(realizations_2,2,var)*(1-1/100)),col = "blue",lwd = 2)
+lines(x,mean_val_2 - 1.66*sqrt(apply(realizations_2,2,var)*(1-1/100)),col = "blue", lwd = 2)
+```
+The empirically obtained predictor and prediction intervals seem to coincide well with the analytical results in Figure \ref{fig:blup}. Since $\mathbf{X}_i \sim N(\hat{X},\text{Cov}(\hat{X}-\mathbf{X}))$, for $i = 1,...,n$, we know that
+\begin{align*}\lim_{n\rightarrow \infty} \bar{X} = \hat{X} \\ \lim_{n \rightarrow \infty} T = Z \sim N(0,1)\end{align*}
+i.e. when $n \rightarrow \infty$, we obtain the analytical prediction and prediction variance.
+
+## Approximating the area under $X$
+We define an approximation to the area under $X$ and above the line $2$ as
+$$A = \sum_{s = 1}^{50} \mathbb{I}(X(s) > 2)(X(s) - 2)$$
+where $\mathbb{I}$ is the indicator function. One way to estimate $A$ would be to use the 100 realizations above, and calculate the mean. Denote this estimate by $\hat{A}$, which takes the form
+$$\hat{A} = \frac{1}{100}\sum_{i=1}^{100}\sum_{s = 1}^{50}\mathbb{I}(\mathbf{X}_i(s) > 2)(\mathbf{X}_i(s) - 2) \\
+= \frac{1}{100}\sum_{i=1}^{100}A_i$$
+where $\mathbf{X}_i$ is the vector containing one realization. We find that $\hat{A} = 0$.
+```{r,echo = F,eval = F}
+A_hat <- 0
+for (i in 1:100){
+  A_hat <- A_hat + (realizations[i,] > 2) %*% (realizations[i,] - 2)
+}
+A_hat <- A_hat/100
+as.numeric(A_hat)
+```
+We can compare this estimator to another predictor, which takes the form
+$$\tilde{A} = \sum_{s=1}^{50} \mathbb{I}(\mathbf{\hat{X}}(s) > 2)(\mathbf{\hat{X}}(s)-2)$$
+where $\mathbf{\hat{X}}$ is the Simple Kriging predictor in Equation \eqref{eq:blup}. 
+```{r,echo = F,eval = F}
+#Or the other predictor:
+A_tilde <- t((blup > 2)) %*% (blup - 2)
+as.numeric(A_tilde)
+```
+We find that $\tilde{A} = 0$. Both estimates are $0$, which is not surprising, as none of the realizations in Figure \ref{fig:blup}a seem to go above the line $2$. However, we can compare the two predictors of $A$ by way of Jensen's inequality, which states that
+$$\text{E}(\phi(X)) \geq \phi(\text{E}(X))$$
+where $\phi$ is a convex function. We use that $A(X)$ is a convex function. Then,
+$$\text{E}(A(X)) \approx \frac{1}{n}\sum_{i=1}^n A_i(X) = \hat{A} \geq A(\text{E}(X)) = A(\hat{X}) = \tilde{A}$$
+so one expects that $\hat{A} \geq \tilde{A}$. 
+
+## Summary of experiences
+We present here some of the experiences we have made during part 1 of the project.
+
+* Notation can be very difficult to navigate, but it is essential to be consistent and use it properly, to avoid as much confusion as possible.
+* The model parameters seem to control the realizations to a very large degree - the smoothness of the covariance function especially.
+
+# Part 2 - real data
+
+```{r,echo = F}
+data <- read.table("topo.dat")
+```
+In this part, we consider a data set consisting of observations of terrain elevation in $52$ locations in $\mathbb{R}^2$. We begin with some data visualization.
+
+## Data visualization
+```{r data_vis,fig.cap='Correlation functions', fig.subcap = c("Scatterplot of data points","Bivariate interpolation"),out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+
+ggplot(data, aes(x, y), asp=1) + geom_point(aes(color=z), size=4) +
+  scale_color_viridis_c(option = "inferno") + coord_fixed() +
+  theme(text=element_text(size=17), # size of axis labels
+        axis.text=element_text(size=15), # size of axis ticks
+        legend.text=element_text(size=13),  # size of legend text
+        legend.title=element_text(size=16)) # size of legend ticks
+
+smooth <- interp(data$x,data$y,data$z, nx=100, ny=100)
+zmin <- min(smooth$z, na.rm=T)
+zmax <- max(smooth$z, na.rm=T)
+breaks <- pretty(c(zmin,zmax),10)
+colour <- hcl.colors(length(breaks)-1, palette="viridis")
+par(pty="s")
+image.plot(smooth, xaxs="i", yaxs="i", asp=1, breaks=breaks, col=colour,legend.args = list(text="z", side=3, cex=1.5))
+contour(smooth, asp=1, add=T, lwd=2,labcex = 1, breaks=breaks)
+
+```
+In Figure \ref{fig:data_vis}a, we plot the data points on a grid $[0,315]^2$. In Figure \ref{fig:data_vis}b, a linear interpolation of the data points is shown, along with the estimated equidistance curves. We notice in b) that the elevation seems to be increasing towards lower values on the $y$-axis, which might indicate non-stationarity (non-constant mean function).
+
+## Universal kriging predictor
+
+Let $\mathcal{D} = [0,315]^2 \subset \mathbb{R}^2$. Consider the GRF $X$ on $\mathcal{D}$, modelled by
+\begin{align*}\text{E}(X(\mathbf{s})) = \mathbf{g}(\mathbf{s})^T\boldsymbol{\beta}, \ \  \mathbf{s} \in \mathcal{D} \\
+\text{Var}(X(\mathbf{s})) = \sigma^2, \ \ \mathbf{s} \in \mathcal{D} \\
+\text{Corr}(X(\mathbf{s}),X(\mathbf{s'})) = \rho (\| \mathbf{s} - \mathbf{s}'\|), \ \ \mathbf{s}, \mathbf{s}' \in \mathcal{D}\end{align*}
+where $\mathbf{g}(\mathbf{s}) = (1,g_2(\mathbf{s}),\dots,g_{n_g}(\mathbf{s}))^T$ is a vector of known spatial variables, and $\boldsymbol{\beta} = (\beta_1, \dots, \beta_{n_g})^T$ is a vector of unknown parameters.
+
+Let $\mathbf{s}_0 \in \mathcal{D}$ be an arbitrary unobserved location, and let $\mathbf{X} = (X(\mathbf{s}_1),\dots,X(\mathbf{s}_n))^T$ be the vector of observed locations. The best linear unbiased predictor $\hat{X}_0$ of $X(\mathbf{s}_0) = X_0$ has to satisfy three properties, namely
+\begin{align*} &1) \ \hat{X}_0 =  \mathbf{a}^T\mathbf{X}, \ \  \mathbf{a}^T \in \mathbb{R}^n \\
+&2) \ \text{E}(\hat{X}_0) = \text{E}(X_0) \\
+&3)\  \text{MSE} = \text{E}((X_0 - \hat{X}_0)^2) \text{ is minimized.}\end{align*}
+From 2), we get that
+\begin{align*}\text{E}(\hat{X}_0) = \text{E}(X_0) \\
+\Longleftrightarrow  \mathbf{a}^T\begin{pmatrix}\mathbf{g}(\mathbf{s}_1)^T\boldsymbol{\beta},\dots,\mathbf{g}(\mathbf{s}_n)^T\boldsymbol{\beta}\end{pmatrix}  =  \mathbf{g}(\mathbf{s}_0)^T\boldsymbol{\beta} \\
+\Longleftrightarrow \mathbf{a}^T \text{G} = \mathbf{g}(s_0)^T\end{align*}
+
+where $\text{G}$ is the $(n\times n_g)$ matrix $\text{G} = (\mathbf{g}(\mathbf{s}_1)^T,\dots,\mathbf{g}(\mathbf{s}_n)^T)^T$. From 3), we find the objective function to minimise:
+
+\begin{align*}\text{E}((X_0 - \hat{X}_0)^2) = \text{E}(X_0^2 - 2X_0\hat{X}_0 + \hat{X}_0^2) \\ = \text{Var}(X_0) - 2\mathbf{a}^T\text{Cov}(X_0,\mathbf{X}) + \mathbf{a}^T\text{Var}(\mathbf{X})\mathbf{a} \\ = \sigma^2 - 2\mathbf{a}^T\mathbf{c} + \mathbf{a}^T\Sigma\mathbf{a}\end{align*}
+
+where $\mathbf{c} = \text{Cov}(X_0,\mathbf{X})$ and $\Sigma = \text{Var}(\mathbf{X})$. The optimisation problem becomes
+\begin{align*}\min\limits_{\mathbf{a} \in \mathbb{R}^n} \ (\sigma^2 - 2\mathbf{a}^T\mathbf{c} + \mathbf{a}^T\Sigma\mathbf{a}) \\ \text{s.t.  } \mathbf{a}^T \text{G} = \mathbf{g}(\mathbf{s}_0)\end{align*}
+which can be solved by method of Lagrange multipliers. The solution to the optimization problem is 
+\begin{align*}\hat{X}_0 = \mathbf{g}(\mathbf{s}_0)^T\hat{\boldsymbol{\beta}} + \mathbf{c}^T \Sigma^{-1} (\mathbf{X} - \text{G} \boldsymbol{\beta}), \ \text{where} \\ \hat{\boldsymbol{\beta}} = (\text{G}^T\Sigma^{-1}\text{G})^{-1}\text{G}^T\Sigma^{-1}\mathbf{X}\end{align*}
+and the predictor variance becomes 
+\begin{align*}\text{Var}(X_0 - \hat{X}_0) = \sigma^2 - \mathbf{c}^T\Sigma^{-1}\mathbf{c} + (\mathbf{g}(\mathbf{s}_0) - \text{G}\Sigma^{-1}\mathbf{c})^T(\text{G}^T\Sigma^{-1}G)^{-1}(\mathbf{g}(\mathbf{s}_0) - \text{G}\Sigma^{-1}\mathbf{c})\end{align*}
+
+The marginal variance $\sigma^2$ does not change with a different parameterization of the expectation function. However, the prediction variance does, as it depends on the matrix $\text{G}$.
+
+## Ordinary Kriging
+We consider the case of ordinary Kriging, namely
+$$\text{E}(X(\mathbf{s})) = \beta_1, \ \mathbf{s} \in \mathcal{D}$$
+As the covariance function, we will use
+\begin{align*}\rho(h) = \sigma^2\exp(-(0.01h)^{1.5}), \ h \in [0,\infty)\end{align*}
+i.e. the powered exponential with $a = 100$ and $\alpha = 1.5$. We set the marginal variance to be $\sigma^2= 2500$. We use the package $\texttt{geoR}$ with the function $\texttt{krige.conv}$ to calculate the predictions and prediction variance, for both Ordinary and Universal Kriging.
+In Figure \ref{fig:krig1}, the Ordinary Kriging predictor is shown (left), along with the prediction variance (right).
+```{r krig1,fig.cap='Ordinary kriging. Data points are red', fig.subcap = c("Prediction","Prediction variance"),out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+x <- seq(1,315,1)
+mesh <- meshgrid(x,y = x)
+grid <- cbind(as.vector(t(mesh$X)),as.vector(t(mesh$Y)))
+
+coords <- cbind(x = data$x,y = data$y)
+coords <- as.data.frame(coords)
+
+krig <- krige.control(type.krige = "ok",cov.model = "powered.exponential",cov.pars = c(2500,100),kappa = 1.5)
+result1 <- krige.conv(coords = coords, data = data$z,locations = grid,krige = krig)
+
+df <- data.frame(s1 = grid[,1],s2 = grid[,2], pred = result1$predict,var = result1$krige.var)
+fig_pred = ggplot(data = df, aes(s1, s2)) + 
+    geom_raster(aes(fill = pred)) +
+    scale_fill_viridis_c( name = "Response") + 
+    coord_fixed() +
+    labs(x = "x", y = "y") +
+    geom_point(data = coords, aes(x,y),color = "red",size = 1) +
+    theme(text=element_text(size=15),         # change font size of all text
+          axis.text=element_text(size=11),    # change font size of axis text
+          axis.title=element_text(size=11),   # change font size of axis titles
+          plot.title=element_text(size=11),   # change font size of plot title
+          legend.text=element_text(size=10),  # change font size of legend text
+          legend.title=element_text(size=10)) # change font size of legend title  
+
+fig_var = ggplot(data = df,aes(s1,s2)) +
+  geom_raster(aes(fill = var)) +
+  scale_fill_viridis_c(name = "Variance") +
+  coord_fixed() +
+  labs(x = "x", y = "y") +
+  geom_point(data = coords, aes(x,y),color = "red",size = 1) +
+  theme(text=element_text(size=15),         # change font size of all text
+          axis.text=element_text(size=11),    # change font size of axis text
+          axis.title=element_text(size=11),   # change font size of axis titles
+          plot.title=element_text(size=11),   # change font size of plot title
+          legend.text=element_text(size=10),  # change font size of legend text
+          legend.title=element_text(size=10)) # change font size of legend title
+
+fig_pred
+fig_var
+```
+We see that the prediction variance approaches zero as the prediction approaches the known data points. The variance increases in areas where there are few data points nearby.
+
+## Universal Kriging
+
+Denote $\mathbf{s} = (s_1,s_2) \in \mathcal{D}$, and define $\mathbf{g}(\mathbf{s})$ to contain all polynomials $s_1^ks_2^l$ for $(k,l) \in \{(0,0),(1,0),(0,1),(1,1),(2,0),(0,2)\}$, such that
+\begin{align*}\mathbf{g}(\mathbf{s}) = (1,s_1,s_2,s_1s_2,s_1^2,s_2^2) \\ 
+\text{E}(X(\mathbf{s})) = \mathbf{g}(\mathbf{s})^T\boldsymbol{\beta} = \beta_0 + \beta_1s_1 + \beta_2s_2+\beta_3s_1s_2 + \beta_4s_1^2+\beta_5s_2^2\end{align*}
+In Figure \ref{fig:krig2}, the Universal Kriging predictor is shown with the prediction variance, for the mean structure specified above. 
+```{r krig2,fig.cap='Universal kriging. Data points are red', fig.subcap = c("Prediction","Prediction variance"),out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+krig <- krige.control(type.krige = "ok",cov.model = "powered.exponential",cov.pars = c(2500,100),kappa = 1.5,trend.d = "2nd",trend.l = "2nd")
+result2 <- krige.conv(coords = coords, data = data$z,locations = grid,krige = krig)
+
+df <- data.frame(s1 = grid[,1],s2 = grid[,2], pred = result2$predict,var = result2$krige.var)
+fig_pred2 = ggplot(data = df, aes(s1, s2)) + 
+    geom_raster(aes(fill = pred)) +
+    scale_fill_viridis_c( name = "Response") + 
+    coord_fixed() +
+    labs(x = "x", y = "y") +
+    geom_point(data = coords, aes(x,y),color = "red",size = 1) +
+    theme(text=element_text(size=15),         # change font size of all text
+          axis.text=element_text(size=11),    # change font size of axis text
+          axis.title=element_text(size=11),   # change font size of axis titles
+          plot.title=element_text(size=11),   # change font size of plot title
+          legend.text=element_text(size=10),  # change font size of legend text
+          legend.title=element_text(size=10)) # change font size of legend title  
+
+fig_var2 = ggplot(data = df,aes(s1,s2)) +
+  geom_raster(aes(fill = var)) +
+  scale_fill_viridis_c(name = "Variance") +
+  coord_fixed() +
+  labs(x = "x", y = "y") +
+  geom_point(data = coords, aes(x,y),color = "red",size = 0.5) +
+  theme(text=element_text(size=15),         # change font size of all text
+          axis.text=element_text(size=11),    # change font size of axis text
+          axis.title=element_text(size=11),   # change font size of axis titles
+          plot.title=element_text(size=11),   # change font size of plot title
+          legend.text=element_text(size=10),  # change font size of legend text
+          legend.title=element_text(size=10)) # change font size of legend title
+
+fig_pred2
+fig_var2
+```
+The Universal Kriging predictor with the polynomial mean structure seems to produce results very similar to that of Ordinary Kriging. At first glance in Figure \ref{fig:krig2}b, the variance might seem to be lower, but this is because the color scale range is higher, i.e. the variance range in the Universal Kriging predictor is bigger.
+
+The estimated coefficients $\boldsymbol{\beta}$ are:
+```{r,echo = F}
+result2$beta
+```
+The first coefficient $\beta_0$ is much larger than the rest of the coefficients, which indicates that the mean structure seems to be mostly constant and not so much dependent on the spatial structure. In that sense, Universal Kriging gives a prediction which is similar to that of Ordinary Kriging. 
+
+## Elevation in the location $\mathbf{s}_0 = (100,100)$
+We consider the location $\mathbf{s}_0 = (100,100)$. Using the ordinary Kriging predictor (which is Gaussian, since $X$ is a GRF) found previously, with its associated prediction variance, we can calculate the probability of the elevation being higher than 850 meter at this location.
+\begin{align*}\text{P}(\hat{X}(\mathbf{s}_0) > 850) = \text{P}\left(Z > \frac{850-\beta_1}{\sqrt{\text{Var}(\hat{X}(\mathbf{s}_0))}}\right) \\ = 1 - \text{P}\left(Z \leq \frac{850-\beta_1}{\sqrt{\text{Var}(\hat{X}(\mathbf{s}_0))}}\right)\end{align*}
+where $Z$ is standard normal. Using the $\texttt{pnorm}$ function in R, we find 
+```{r,eval = F,echo = F}
+1 - pnorm((850-as.numeric(result1$beta.est))/sqrt(result1$krige.var[100*100]))
+
+```
+$$\text{P}(\hat{X}(\mathbf{s}_0) > 850) = 0.3949761$$
+In addition, we can find the elevation for which the probability is 90% that the true elevation lies below 850 meters. Denote this elevation by $Y$. We use the inverse cumulative distribution function, by solving
+\begin{align*}\text{P}(\hat{X}(\mathbf{s}_0) < Y) = 0.9 \Leftrightarrow F_{\hat{X}}(Y) = 0.9 \\
+\Leftrightarrow Y = F^{-1}_{\hat{X}}(0.9)\end{align*}
+Using the $\texttt{qnorm}$ function in R, we find
+
+```{r,eval = F,echo = F}
+qnorm(0.9,mean = result1$beta.est,sd = sqrt(result1$krige.var[100*100]))
+```
+$$Y = 868.1109, \text{ [meters]}$$
+
+## Summary of experiences
+* In Figure \ref{fig:data_vis}b, we saw some indications that the mean structure might not be constant, and so Ordinary Kriging might not be the best choice. However, Universal Kriging gave coefficient estimates which indicated that the mean was mostly constant. The takeaway here is that interpreting 2D data by eye can be difficult and must be done with care. 
+
+# Problem 3: Parameter estimation
+We consider the stationary GRF
+$\{X(s); s\in\mathcal{D}=[0,30]^2\subset\mathbb{R}\}$ with
+\begin{align}
+  \mathrm{E}[X(s)] &= 0,\quad s\in\mathcal{D} \\
+  \mathrm{Var}[X(s)] &= \sigma^2 = 2^2,\quad s\in\mathcal{D} \\
+  \mathrm{Corr}[X(s), X(s')] &= \mathrm{exp}(-\|s-s'\| / a),
+  \quad s,s'\in\mathcal{D}.
+\end{align}
+Define the grid $\tilde{\mathcal{D}} = \{1, 2, \dots, 30\}^2$.
+A realization can be generated on $\tilde{\mathcal{D}}$ by generating a vector
+of iid standard normal variables and multiplying with the Cholesky factor of the
+covariance matrix.
+
+```{r, fig.cap='A realization of the random field defined in 3a)', echo=FALSE}
+#set.seed(99)
+sig2 = 2
+a = 3
+grid = 1:30
+coords = cbind(rep(grid,length(grid)), rep(grid, each=length(grid)))
+Sigma = sig2 * exp(-as.matrix(dist(coords)) / a)
+L = chol(Sigma)
+
+sample = function(L) {
+  return(L %*% rnorm(dim(L)[1]))
+}
+
+df = data.frame(s1 = coords[,1],
+                s2 = coords[,2],
+                data = sample(L))
+fig = ggplot(data = df, aes(s1, s2)) +
+  geom_raster(aes(fill = data)) + 
+  scale_fill_viridis_c(limits = c(-5,5), name = "Response") + 
+  coord_fixed() + 
+  labs(x = "x", y = "y")
+fig
+
+```
+
+Using the realization computed in 3a) as an exact observation, we can plot
+the empirical variogram and compare it to the exact variogram.
+
+```{r, fig.cap='Exact variogram plotted against the computed empirical variogram of a single realization', echo=FALSE}
+emp = variog(coords = df[, c("s1", "s2")],
+             data = df$data,
+             uvec = seq(0, 30, l=80))
+
+plot(emp, type="l", ylim=c(0,3), xlab="Distance", ylab="Semivariogram")
+lines.variomodel(cov.model = "exponential",
+                 cov.pars = c(sig2, a),
+                 nugget = 0,
+                 max.dist = 40,
+                 col="black",
+                 lwd = 2)
+legend("bottomright",
+       legend = c("Empirical variogram", "True variogram"),
+       col = c("grey", "black"), lwd = c(1, 2))
+```
+
+We see that the empirical variogram deviates a little from the true
+variogram, especially for long ranges.
+The variogram range is 10% of the side lengths of the domain,
+which could lead to simulations with a slightly different correlation structure
+than we specified. If we decreased our variogram range (and refined our
+simulation grid correspondingly), this would become less of a problem.
+
+We repeat this the previous process for 3 different realizations.
+
+```{r, results='hide', fig.cap="3 realizations with their empirical semivariograms", echo=FALSE}
+
+for (i in 1:3) {
+  df$data = sample(L)
+  emp = variog(coords = df[, c("s1", "s2")],
+               data = df$data,
+               uvec = seq(0, 30, l=80))
+  #runs = cbind(runs, emp$v)
+  #runs = c(runs, emp)
+  if (i == 1) {
+    plot(emp, type="l", ylim=c(0,3))
+  } else {
+    lines(emp, type="l")
+  }
+}
+
+lines.variomodel(cov.model = "exponential",
+                 cov.pars = c(sig2, a),
+                 nugget = 0,
+                 max.dist = 40,
+                 col="black",
+                 lwd = 2)
+legend("bottomright",
+       legend = c("Empirical variogram", "True variogram"),
+       col = c("grey", "black"), lwd = c(1, 2))
+
+```
+
+We again see that the correlation structure of our simulations is different
+than what we expect. 
+
+We draw 36 locations uniformly from $\tilde{\mathcal{D}}$.
+
+```{r, results='hide', fig.cap="Semivariogram with 36 observations with their empirical semivariograms", out.width='1\\linewidth', fig.align = "center",echo=FALSE}
+idx = sample.int(nrow(df), 36, replace=FALSE)
+small.df = df[idx,]
+
+emp = variog(coords = small.df[,c("s1","s2")],
+             data = small.df$data,
+             uvec = seq(0, 30, l=40))
+
+plot(emp, type = "l")
+lines.variomodel(cov.model = "exponential",
+                 cov.pars = c(sig2, a),
+                 nugget = 0,
+                 max.dist = 40,
+                 col="black",
+                 lwd = 2)
+legend("bottomright",
+       legend = c("Empirical variogram", "True variogram"),
+       col = c("black", "black"), lwd = c(1, 2))
+
+```
+
+We see that the variance of the semivariogram estimator is much higher when we
+have little data. In a) to c), we had a dataset containing 900 observations of
+the GRF, now we only have 36. This means the uncertainty of the semivariogram
+estimator is much higher for each distance bin than it was when we had a full
+observation on $\tilde{\mathcal{D}}$.
+
+We now compare the empirical semivariograms computed with the full observation
+and the 36 sample locations by plotting them in the same plot, and we also
+try to estimate the parameters $\sigma^2$ and $a$ of the covariance function.
+
+```{r,results='hide',fig.keep='all', echo=FALSE}
+set.seed(69)
+df$data = sample(L)
+
+ml.small = likfit(coords = small.df[,c("s1","s2")],
+                  data = small.df$data,
+                  ini.cov.pars = c(1.5,1.5),
+                  cov.model = "exponential")
+ml.big   = likfit(coords = df[,c("s1","s2")],
+                  data = df$data,
+                  ini.cov.pars = c(1.5,1.5),
+                  cov.model = "exponential")
+
+
+```
+
+The estimated $\sigma^2$ and $a$ with 36 observations were
+```{r}
+ml.small$cov.pars
+```
+The estimated $\sigma^2$ and $a$ with 900 observations were
+```{r}
+ml.big$cov.pars
+```
+With 900 observations, the ML estimate of $\sigma^2$ and $a$ are obviously much
+more accurate. We can also visualize the variograms these estimated parameters
+describe, and see that the estimate based on the full grid observation is closer
+to the true variogram than the 36 observation one.
+
+```{r, echo=FALSE}
+plot(1:30, rep(2, 30), type="n", ylab="semivariogram", xlab="distance", ylim=c(0,3))
+lines(ml.small, col="blue")
+lines(ml.big, col="red")
+lines.variomodel(cov.model = "exponential",
+                 cov.pars = c(sig2, a),
+                 nugget = 0,
+                 max.dist = 40,
+                 col="black",
+                 lwd = 2)
+legend("bottomright",
+       legend = c("36 obs estimate", "900 obs estimate", "True variogram"),
+       col = c("blue", "red", "black"), lwd = c(1, 1, 2))
+```
+
+We repeat this process for 9 and 100 locations randomly chosen from the
+discretized domain.
+```{r, echo=FALSE}
+sample_and_estimate = function(num_samples) {
+  idx = sample.int(nrow(df), num_samples, replace=FALSE)
+  small.df = df[idx,]
+  
+  ml.small = likfit(coords = small.df[,c("s1","s2")],
+                  data = small.df$data,
+                  ini.cov.pars = c(1.5,1.5),
+                  cov.model = "exponential")
+  
+  plot(1:30, rep(2, 30), type="n", ylab="semivariogram", xlab="distance",ylim=c(0,3))
+  lines(ml.small, col="blue")
+  lines.variomodel(cov.model = "exponential",
+                   cov.pars = c(sig2, a),
+                   nugget = 0,
+                   max.dist = 40,
+                   col="black",
+                   lwd = 2)
+  legend("bottomright",
+         legend = c("Empirical variogram", "True variogram"),
+         col = c("blue", "black"), lwd = c(1, 2))
+  return(list(sigma2 = ml.small$cov.pars[1], a = ml.small$cov.pars[2]))
+}
+```
+
+We first handle the case with 9 sampling locations.
+
+```{r, results='hide',fig.keep='all', echo=FALSE}
+res = sample_and_estimate(9)
+```
+
+We immediately see that something went wrong in the maximum likelihood
+estimation. Probably, we simply did not have enough data to converge.
+
+The computed parameters were
+```{r}
+res$sigma2
+res$a
+```
+
+Again, we see that the algorithm did not converge.
+
+
+The case with 100 locations is handled similarly.
+```{r, results='hide', out.width='1\\linewidth',fig.align = "center",echo=FALSE}
+res = sample_and_estimate(100)
+```
+
+Now we see that the ML algorithm converges, and that it seems like it
+produces reasonable estimates to the true model parameters.
+
+The computed parameter estimates were
+```{r}
+res$sigma2
+res$a
+```
+
+This confirms that the model parameters were estimated properly
+
+In summary, we can say that empirical variograms can provide an indication
+of the true model parameters, but they can also be highly unreliable. This is
+true especially of cases with little data, but the estimates can also be 
+relatively poor even when we have access to many observations.
+
+When using a model based maximum likelihood approach to variogram estimation,
+we also need to be cautious of the convergence of the maximum likelihood
+algorithm. This becomes less of an issue when the amount of data increases.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
