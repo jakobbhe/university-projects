@@ -1,0 +1,429 @@
+---
+title: "TMA4250 - Project 2"
+author: "Jakob Heide, Bendik Waade"
+date: "2024-03-04"
+header-includes:
+   - \usepackage{subfig}
+output:
+  pdf_document:
+    fig_caption: yes        
+    includes:  
+      in_header: my_header.tex
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+```{r,echo = F}
+library(ggplot2)
+library(spatial)
+library(matrixStats)
+
+redwood <- read.table("pp_redwood.dat",skip = 3)
+colnames(redwood) <- c("x","y")
+
+pines <- read.table("pp_pines.dat",skip = 3)
+colnames(pines) <- c("x","y")
+
+cell <- read.table("pp_cells.dat",skip = 3)
+colnames(cell) <- c("x","y")
+```
+
+In this project, we consider three real-world point pattern datasets,
+
+* redwood tree data: $62$ observations in the observation window $[0,1]\times[0,1]$
+* pine tree data: $42$ observations in the observation window $[0,1]\times[0,1]$
+* biological cell data: $42$ observations in the observation window $[0,1]\times[0,1]$
+
+# Part 1 - Analysis of point pattern data
+## Point pattern visualization
+We begin by displaying each of the point patterns.
+```{r point_patterns,fig.cap='Point patterns', fig.subcap = c("Redwood","Pines","Cells"),out.width='.33\\linewidth', fig.asp=1, fig.ncol = 3,echo = F}
+ggplot(redwood, aes(x, y), asp=1) + geom_point(size=3) +
+  theme(text=element_text(size=18)) #Clustered
+ggplot(pines, aes(x, y), asp=1) + geom_point(size=3) +
+  theme(text=element_text(size=18)) #Random
+ggplot(cell, aes(x, y), asp=1) + geom_point(size=3) +
+  theme(text=element_text(size=18)) #Repulsive
+```
+In Figure \ref{fig:point_patterns}a, the point pattern seems to indicate clustering. This might be related to how redwood trees produce offspring and how they grow - for example, some tree types prefer to grow close together so they can share root systems, in order to make them more resilient. In Figure \ref{fig:point_patterns}c, the point pattern shows repulsion. Natural systems like cell systems tend towards (local) states of minimal energy. For example, if the cells carry similar charges, then the cells will repulse each other and the positioning of the cells will tend towards a state where the distance between cells is maximized. The point pattern in Figure \ref{fig:point_patterns}b seems to indicate randomness. One possible reason for this is that some trees or plants rely on wind (or animals) to spread their seeds, which might result in a seemingly random spread of the seeds. 
+
+## The L-function
+To quantify the repulsion or clustering of a stationary point process, we can use the L-function, which is defined on $\mathbb{R}^2$ as
+\begin{equation}L(r) = \sqrt{\frac{k(r)}{\pi}}, \quad r \geq 0,
+\label{eq:Lfn}
+\end{equation}
+where $k(r)$ is Ripley's K-function. The K-function is defined for a stationary point process $N$ with intensity $\lambda$ as 
+$$k(r) = \frac{1}{\lambda}\text{E}_\mathbf{0}[N(b(\mathbf{0},r)\backslash \{ \mathbf{0} \} )], \quad r \geq 0$$
+where the subscript in $\text{E}_\mathbf{0}$ denotes the assumption that there is a point in $\mathbf{x} = \mathbf{0}$, and $N(b(\mathbf{0,r}))$ denotes the number of points in a ball (on $\mathbb{R}^2$, a circle) centered in $\mathbf{0}$ with radius $r$. For a homogeneous Poisson point process, the K-function becomes $k(r) = \pi r^2$, which gives the L-function
+$$L(r) = r, \quad r \geq 0$$
+If we replace $k(r)$ in Equation \eqref{eq:Lfn} by the empirical K-function $\hat{k}(r)$, we obtain the empirical L-function. We use the function $\texttt{Kfn}$ from the library $\texttt{spatial}$, and plot the empirical L-function for each of the point patterns, along with the L-function for a homogeneous Poisson point process.
+```{r L_functions,fig.cap='Empirical L-functions', fig.subcap = c("Redwood","Pines","Cells"),out.width='.33\\linewidth', fig.asp=1, fig.ncol = 3,echo = F}
+ppregion(xl = 0, xu = 1, yl = 0, yu = 1)
+Lfn.redwood <- Kfn(redwood,1)
+plot(Lfn.redwood$x,Lfn.redwood$y,xlab = "r",ylab = "L(r)",col = "black")
+lines(Lfn.redwood$x,Lfn.redwood$x, col = "red",lty = 1)
+legend("topleft", legend=c("Empirical L-function","L(r) = r"), col=c("black","red"), lty = c(NA,1),pch = c(1,NA),cex = 1, lw=2, inset=0.1, box.lty=0)
+grid()
+
+Lfn.pines <- Kfn(pines,1)
+plot(Lfn.pines$x,Lfn.pines$y,xlab = "r",ylab = "L(r)",col = "black")
+lines(Lfn.pines$x,Lfn.pines$x, col = "red",lty = 1)
+legend("topleft", legend=c("Empirical L-function","L(r) = r"), col=c("black","red"), lty = c(NA,1),pch = c(1,NA),cex = 1, lw=2, inset=0.1, box.lty=0)
+grid()
+
+Lfn.cell <- Kfn(cell,1)
+plot(Lfn.cell$x,Lfn.cell$y,xlab = "r",ylab = "L(r)",col = "black")
+lines(Lfn.cell$x,Lfn.cell$x, col = "red",lty = 1)
+legend("topleft", legend=c("Empirical L-function","L(r) = r"), col=c("black","red"), lty = c(NA,1),pch = c(1,NA),cex = 1, lw=2, inset=0.1, box.lty=0)
+grid()
+```
+In Figure \ref{fig:L_functions}a, we see that the empirical L-function lies above the L-function for a homogeneous Poisson point process, for $r = 0$ to $r \approx 0.2$. This indicates that we have some clusterization and that a homogeneous Poisson process is a bad choice for modelling this data. In Figure \ref{fig:L_functions}b, the empirical L-function matches pretty well with the theoretical L-function for the homogeneous Poisson process, although there might be some slight deviation for $r > 0.5$. A homogeneous Poisson process appears to be a suitable model. In Figure \ref{fig:L_functions}c, the empirical L-function lies below the theoretical L-function for $r < 0.2$, which indicates repulsion and that a homogeneous Poisson process is a bad choice of model.
+
+## Prediction intervals
+However, it can be hard to tell how much deviation from the line $L(r) = r$ we need in order to conclude that the homogeneous Poisson point process is a bad choice for a model. Therefore, for each dataset, we simulate $100$ realizations of a homogeneous Poisson point process with intensity equal to the number of points in the dataset, and calculate the 5% and 95% quantiles, to be used as the lower and upper limit of the 90% prediction interval. The results are shown in Figure \ref{fig:pred_intervals}.
+```{r, echo = F}
+#For each dataset: simulate 100 realizations of homogeneous Poisson point process
+simulate <- function(df){
+  lambda.df <- length(df$x) #Since the area of the rectangle is 1
+
+  #Run one realization
+  u <- runif(lambda.df)
+  v <- runif(lambda.df)
+
+  Lfn <- Kfn(data.frame(x = u, y = v),1)
+  n <- length(Lfn$y)
+  realizations <- matrix(NA,nrow = 100,ncol = n)
+  realizations[1,] <- Lfn$y
+
+  for (i in 2:100){
+    u <- runif(lambda.df)
+    v <- runif(lambda.df)
+
+    Lfn <- Kfn(data.frame(x = u, y = v),1)
+    realizations[i,] <- Lfn$y
+  }
+  quant.l <- colQuantiles(realizations,probs = 0.05)
+  quant.u <- colQuantiles(realizations,probs = 0.95)
+  return (data.frame(x = Lfn$x,ql = quant.l,qu = quant.u))
+}
+```
+
+```{r pred_intervals,fig.cap='Empirical prediction intervals, with the empirical L-functions for each data set. ', fig.subcap = c("Redwood","Pines","Cells"),out.width='.33\\linewidth', fig.asp=1, fig.ncol = 3,echo = F}
+data <- simulate(redwood)
+
+plot(data$x,Lfn.redwood$y,col = "black",t = "p",xlab = "r",ylab = "Response")
+lines(data$x,data$ql,col = "blue")
+lines(data$x,data$qu,col = "blue")
+legend("topleft", legend=c("90% prediction intervals","Empirical L-function"), col=c("blue","black"),
+       lty = c(1,NA),pch = c(NA,1),cex = 1, lw=2, inset=0.1, box.lty=0)
+grid()
+
+data <- simulate(pines)
+
+plot(data$x,Lfn.pines$y,col = "black",t = "p",xlab = "r",ylab = "Response")
+lines(data$x,data$ql,col = "blue")
+lines(data$x,data$qu,col = "blue")
+legend("topleft", legend=c("90% prediction intervals","Empirical L-function"), col=c("blue","black"),
+       lty = c(1,NA),pch = c(NA,1),cex = 1, lw=2, inset=0.1, box.lty=0)
+grid()
+
+data <- simulate(cell)
+
+plot(data$x,Lfn.cell$y,col = "black",t = "p",xlab = "r",ylab = "Response")
+lines(data$x,data$ql,col = "blue")
+lines(data$x,data$qu,col = "blue")
+legend("topleft", legend=c("90% prediction intervals","Empirical L-function"), col=c("blue","black"),
+       lty = c(1,NA),pch = c(NA,1),cex = 1, lw=2, inset=0.1, box.lty=0)
+grid()
+```
+We see that our conclusions from before for each of the point patterns are supported. In Figure \ref{fig:pred_intervals}a and Figure \ref{fig:pred_intervals}c, more than 10% of the points lie outside the estimated 90% prediction interval, which violates the assumption of a homogeneous Poisson point process. In Figure \ref{fig:pred_intervals}b, almost all the points lie within the prediction interval, which indicates that a Poisson point process is a reasonable model. However, using only $100$ realizations to estimate a 90% prediction interval seems a bit thin - to gain more precise estimates, we could increase the number of realizations.
+
+# Part 2 - Remote sensing of trees
+We consider a $300\text{m}\times 300\text{m}$ observation window, where the locations of pine trees are observed by a satelite. The satelite counts the pine trees in a regular $30\times 30$ grid where each cell is $10\text{m}\times 10\text{m}$ and has an associated detection probability.
+
+For all the cells $i,j = 1,\dots,30$, we denote by $M_{ij}$ the detected number of pine trees, by $N_{ij}$ the true number of pine trees, and by $\alpha_{ij}$ the detection probability. Let $\mathbf{M} = (M_{1,1},\dots,M_{1,30},\dots,M_{30,,30})$, $\mathbf{N} = (N_{1,1},\dots,N_{1,30},\dots,N_{30,30})$ and $\boldsymbol{\alpha} = (\alpha_{1,1},\dots,\alpha_{1,30},\dots,\alpha_{30,30})$.  In addition, let $\mathbf{m} = (m_{1,1},\dots,m_{30,30})$ and $\mathbf{n} = (n_{1,1},\dots,n_{30,30})$ be realized values of $\mathbf{M}$ and $\mathbf{N}$, respectively.
+
+## Data visualization
+We display the data in Figure \ref{fig:data_vis}.
+```{r data_vis,fig.cap='Data visualization', fig.subcap = c("Pine count observations","Observation probabilities"),out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+obs.pines <- read.table("obspines.txt",header = T)
+obs.prob <- read.table("obsprob.txt",header = T)
+
+#Displaying the counts of pines
+ggplot(obs.pines) + geom_raster(aes(x=x,y=y, fill=N_obs)) +
+  scale_fill_gradient2(low="white", mid="green", high="black", midpoint=2) + coord_fixed() + labs(fill="N") + xlab("x") + ylab("y") +
+  theme(text=element_text(size=18),aspect.ratio = 1)
+
+#Displaying the observation probabilities
+boxes <- data.frame(
+  x_min = obs.prob$x - 5,   # Calculate x-coordinate of bottom-left corner
+  x_max = obs.prob$x + 5,   # x-coordinate of top-right corner
+  y_min = obs.prob$y - 5,   # Calculate y-coordinate of bottom-left corner
+  y_max = obs.prob$y + 5,   # y-coordinate of top-right corner
+  value = obs.prob$alpha           
+)
+
+ggplot() +
+  geom_rect(data = boxes, aes(xmin = x_min, xmax = x_max, ymin = y_min, ymax = y_max, fill = value), color = "black") +
+  coord_fixed() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  labs(title = "",
+       x = "x",
+       y = "y") +
+  theme(text=element_text(size=18),aspect.ratio = 1)
+```
+In Figure \ref{fig:data_vis}a, we see that the number of observed pine trees increases towards the top of the grid, that is, with increasing values of $y$. In Figure \ref{fig:data_vis}b, we see that the observation probabilites increase with increasing values of $y$ and slightly with increasing values of $x$.
+
+## Observation model
+We assume that the pine trees are detected independently of each other. Consider the conditional $\mathbf{M}|\mathbf{N}$, where the true amount of trees is given. For $i,j = 1,\dots,30$, the probability of observing $M_{ij}$ trees is then binomially distributed, where $N_{ij}$ is the number of trials and $\alpha_{ij}$ is the success probability. The observation model is 
+$$M_{ij} | N_{ij} \sim \text{Bin}(N_{ij},\alpha_{ij}),$$
+with the probability mass function
+$$f_{M_{ij}|N_{ij}}(m_{ij}|n_{ij};\alpha_{ij}) = {n_{ij}\choose m_{ij}}\alpha_{ij}^{m_{ij}}(1-\alpha_{ij})^{n_{ij}-m_{ij}},\quad m_{ij} = 0,1,\dots$$
+Since the observations from one grid cell are independent from the observations of another grid cell, we can write the joint probability mass function as
+\begin{equation}f_{\mathbf{M}|\mathbf{N}}(\mathbf{m}|\mathbf{n};\boldsymbol{\alpha}) = \prod_{i,j = 1 }^{30} {n_{ij}\choose m_{ij}}\alpha_{ij}^{m_{ij}}(1-\alpha_{ij})^{n_{ij}-m_{ij}}, \quad m_{ij} = 0,1,\dots
+\label{f_MN}\end{equation}
+
+## Prior model
+We assume that the number of pine trees follow a homogeneous Poisson point process with intensity $\lambda$. The observation window $W = [0,300]\times[0,300]$ is discretized as before by a regular $30\times30$ grid. For $i,j = 1,\dots,30$, we define the following:
+
+* The center of the cell, i.e. the centroid: $\mathbf{s}_{ij} = ((i-\frac{1}{2})\cdot 10,(j-\frac{1}{2})\cdot 10)^T$.
+
+* The grid cell: $B_{ij} = \mathbf{s}_{ij} + ( - 5,5] \times (-5,5]$
+
+* Grid cell counts: $N_{ij} = N(B_{ij})$
+
+Inside a grid cell, the number of pine trees is Poisson distributed with rate $100\lambda$. Since the observations in different cells are independent from each other, we can write the probability mass function of $\mathbf{N}$ as the product of the probability mass functions for $N_{ij}$, $i,j = 1,\dots,30$. The joint probability mass function is thus
+\begin{equation*}
+f_{\mathbf{N}}(\mathbf{n};\lambda) = \prod_{i,j = 1}^{30} f_{N_{ij}}(n_{ij};\lambda)
+\end{equation*}
+\begin{equation}
+= \prod_{i,j = 1}^{30} \frac{(100\lambda)^{n_{ij}}}{n_{ij}!}\exp(-100\lambda), \quad n_{ij} = 0,1,\dots
+\label{f_N}
+\end{equation}
+
+## Estimator for $\lambda$
+Since $\mathbf{N}$ follows a Poisson point process with intensity $\lambda$, we know that the observed counts $\mathbf{M}$ follow a Poisson point process with intensity $\lambda \boldsymbol{\alpha}$. The joint probability mass function for $\mathbf{M}$ becomes
+\begin{equation}f_{\mathbf{M}}(\mathbf{m};\boldsymbol{\alpha},\lambda) = \prod_{i,j= 1}^{30} \frac{(100\lambda\alpha_{ij})^{m_{ij}}}{m_{ij}!}\exp(-100\lambda\alpha_{ij}), \quad m_{ij} = 0,1,\dots \label{f_M}\end{equation}
+To estimate the intensity $\lambda$, we would preferably use the estimator 
+$$\hat{\Lambda}_1 = \frac{1}{300^2}\sum_{i,j} N_{ij},$$
+which is unbiased. However, it requires the true counts $N_{ij}$ for $i,j = 1,\dots,30$, which we do not have access to. We therefore turn to the estimator
+$$\hat{\Lambda}_2 = C \sum_{i,j} M_{ij},$$
+which is unbiased for $C = 1/(100\sum_{ij}\alpha_{ij})$, since
+$$\text{E}[\hat{\Lambda}_2] = C\sum_{i,j}\text{E}[M_{ij}] \\ = 100C\lambda \sum_{ij}\alpha_{ij},$$
+We generate three realizations of the discretized true counts $\mathbf{N}$, using the estimator $\hat{\Lambda}_2$. For each realization, we place the $n_{ij}$ points uniformly in each grid cell $i,j = 1,\dots,30$, and display the point patterns in Figure \ref{fig:N_realizations}.
+```{r, echo = F}
+simulate_N <- function(){
+  lambda_hat <- sum(obs.pines$N_obs)/(100*sum(obs.prob$alpha))
+  N <- rpois(900,100*lambda_hat)
+
+  realization <- matrix(NA, nrow = sum(N),ncol = 2)
+  count <- 1
+
+  for (j in 1:30){ #y value of cell
+    for (i in 1:30){ #x value of cell
+      s <- 10*c(i - 0.5,j - 0.5) #centroid of grid cell i,j
+
+      if (N[(j-1)*30+i] > 0){ #Need this check since R exists
+        for (n in 1:N[(j-1)*30+i]){ #How many points in grid cell i,j?
+          x <- runif(1,min = s[1] - 5, max = s[1] + 5) #Find position of point
+          y <- runif(1,min = s[2] - 5, max = s[2] + 5)
+
+          realization[count,] <- c(x,y) #Save position
+          count <- count + 1
+        }
+      }
+
+    }
+  }
+  colnames(realization) <- c("x","y")
+  return (realization)
+}
+```
+```{r N_realizations,fig.cap='Realizations of $\\mathbf{N}$', fig.subcap = c("One realization","One realization","One realization"),out.width='.33\\linewidth', fig.asp=1, fig.ncol = 3,echo = F}
+r1 <- as.data.frame(simulate_N())
+r2 <- as.data.frame(simulate_N())
+r3 <- as.data.frame(simulate_N())
+
+ggplot(data = r1, aes(x,y),asp = 1) + geom_point(size = 1.5)
+ggplot(data = r2, aes(x,y),asp = 1) + geom_point(size = 1.5)
+ggplot(data = r3, aes(x,y),asp = 1) + geom_point(size = 1.5)
+```
+In Figure \ref{fig:N_realizations}, we see that the realizations of $\mathbf{N}$ behave differently than the observed counts in Figure \ref{fig:data_vis}a. The reason for this is that $\mathbf{N}$ are assumed to follow a homogeneous Poisson point process, but the observed counts $\mathbf{M}$ follow an inhomogeneous Poisson process, where the intensity varies from grid cell to grid cell, due to the observation probabilities $\boldsymbol{\alpha}$.
+
+## Posterior distribution
+To find the probability mass function for the conditional $\mathbf{N}|\mathbf{M} = \mathbf{m}$, we use Bayes' rule in addition to the definition of conditional density, which gives
+$$f_{\mathbf{N}|\mathbf{M} = \mathbf{m}} = \frac{f_{\mathbf{M}|{\mathbf{N}}}f_{\mathbf{M}}}{f_{\mathbf{N}}}$$
+We know $f_{\mathbf{M}|\mathbf{N}}$ from Equation \eqref{f_MN}, $f_{\mathbf{N}}$ from Equation \eqref{f_N}, and $f_{\mathbf{M}}$ from Equation \eqref{f_M}. After inserting the three expressions and carrying out some algebra, we find
+\begin{equation}f_{\mathbf{N}|\mathbf{M} = \mathbf{m}}(\mathbf{n}|\mathbf{m};\boldsymbol{\alpha},\lambda) = \prod_{i,j = 1}^{30} \frac{(100\lambda(1-\alpha_{ij}))^{n_{ij}-m_{ij}}}{(n_{ij}-m_{ij})!}\exp(-100\lambda (1-\alpha_{ij})), \quad n_{ij}-m_{ij} = 0,1,\dots, \label{f_NM}\end{equation}
+i.e. the unobserved trees $(\mathbf{N}-\mathbf{M})|\mathbf{M}$ follow a Poisson distribution with intensity $\lambda(1-\boldsymbol{\alpha})$. To create realizations, we sample from this distribution and add the number of observed trees, $M_{ij}$, to all grid cells $i,j = 1,\dots,30$.
+```{r NM_realizations,fig.cap='Realizations of $\\mathbf{N}|\\mathbf{M}$', fig.subcap = c("One realization","One realization","One realization"),out.width='.33\\linewidth', fig.asp=1, fig.ncol = 3,echo = F}
+simulate_NM <- function(){
+  lambda_hat <- sum(obs.pines$N_obs)/(100*sum(obs.prob$alpha))
+  N <- rpois(900,100*lambda_hat*(1-obs.prob$alpha)) + obs.pines$N_obs
+  
+  realization <- matrix(NA, nrow = sum(N),ncol = 2)
+  count <- 1
+  
+  for (i in 1:30){ #x value of cell
+    for (j in 1:30){ #y value of cell
+      s <- 10*c(i - 0.5,j - 0.5) #centroid of grid cell i,j
+      
+      if (N[(j-1)*30+i] > 0){ #Need this check since R exists
+        for (n in 1:N[(j-1)*30+i]){ #How many points in grid cell i,j?
+          x <- runif(1,min = s[1] - 5, max = s[1] + 5) #Find position of point
+          y <- runif(1,min = s[2] - 5, max = s[2] + 5)
+          
+          realization[count,] <- c(x,y) #Save position
+          count <- count + 1
+        }
+      }
+      
+    }
+  }
+  colnames(realization) <- c("x","y")
+  return (realization)
+}
+
+r1 <- as.data.frame(simulate_NM())
+r2 <- as.data.frame(simulate_NM())
+r3 <- as.data.frame(simulate_NM())
+
+ggplot(data = r1, aes(x,y),asp = 1) + geom_point(size = 1.5)
+ggplot(data = r2, aes(x,y),asp = 1) + geom_point(size = 1.5)
+ggplot(data = r3, aes(x,y),asp = 1) + geom_point(size = 1.5)
+```
+When we compare Figure \ref{fig:NM_realizations} with Figure \ref{fig:N_realizations}, we see that the realizations produced are very similar. The fact that conditioning the true counts $\mathbf{N}$ on the observed counts $\mathbf{M}$ does not change the realizations significantly indicates that the choice of prior for $\mathbf{N}$ was a good choice - namely that $\mathbf{N}$ follows a homogeneous Poisson point process.
+
+## Estimating the mean and standard deviation in each cell
+We simulate $500$ realizations of $\mathbf{N}$ and $\mathbf{N}|\mathbf{M}$. In both cases, we calculate the mean and the standard deviation in each grid cell, using the realizations. 
+```{r 500_realizations,fig.cap='Estimated means and standard deviations.', fig.subcap = c("Estimated mean for $\\mathbf{N}$.","Estimated mean for $\\mathbf{N}|\\mathbf{M}$.","Estimated standard deviation for $\\mathbf{N}$.","Estimated standard deviation for $\\mathbf{N}|\\mathbf{M}$."),out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,fig.align = "center",echo = F}
+simulate_500 <- function(lambda){
+  est <- matrix(NA,nrow = 500,ncol = 900)
+  for (i in 1:500){
+    N <- rpois(900,100*lambda)
+    est[i,] <- N
+  }
+  means1 <- colMeans(est)
+  stdevs1 <- sqrt(apply(est,2,var))
+
+  for (i in 1:500){
+    N <- rpois(900,100*lambda*(1-obs.prob$alpha)) + obs.pines$N_obs
+    est[i,] <- N
+  }
+  means2 <- colMeans(est)
+  stdevs2 <- sqrt(apply(est,2,var))
+  return (list(m1 = means1,m2 = means2,sd1 = stdevs1, sd2 = stdevs2))
+}
+
+lambda_hat <- sum(obs.pines$N_obs)/(100*sum(obs.prob$alpha))
+est <- simulate_500(lambda_hat)
+
+
+new_df <- obs.pines
+new_df$N_obs <- est$m1
+ggplot(new_df) + geom_raster(aes(x=x,y=y, fill=N_obs)) +
+  scale_fill_gradient2(low="white", mid="red", high="black", midpoint=2,limits = c(0,4)) + coord_fixed() + labs(fill="N") + xlab("x") + ylab("y") +
+  theme(text=element_text(size=18),aspect.ratio = 1)
+
+new_df$N_obs <- est$m2
+ggplot(new_df) + geom_raster(aes(x=x,y=y, fill=N_obs)) +
+  scale_fill_gradient2(low="white", mid="red", high="black",midpoint = 2,limits = c(0,4)) + coord_fixed() + labs(fill="N|M") + xlab("x") + ylab("y") +
+  theme(text=element_text(size=18),aspect.ratio = 1)
+
+new_df$N_obs <- est$sd1
+ggplot(new_df) + geom_raster(aes(x=x,y=y, fill=N_obs)) +
+  scale_fill_gradient2(low="white", mid="darkgreen", high="black", midpoint=1,limits = c(0.5,1.2)) + coord_fixed() + labs(fill="N") + xlab("x") + ylab("y") +
+  theme(text=element_text(size=18),aspect.ratio = 1)
+
+new_df$N_obs <- est$sd2
+ggplot(new_df) + geom_raster(aes(x=x,y=y, fill=N_obs)) +
+  scale_fill_gradient2(low="white", mid="darkgreen", high="black",midpoint = 1,limits = c(0.5,1.2)) + coord_fixed() + labs(fill="N|M") + xlab("x") + ylab("y") +
+  theme(text=element_text(size=18),aspect.ratio = 1)
+```
+In Figure \ref{fig:500_realizations}a and Figure \ref{fig:500_realizations}b, we see the estimated means for $\mathbf{N}$ and $\mathbf{N}|\mathbf{M}$, respectively. The mean values for $\mathbf{N}$ seem to be constant, but for $\mathbf{N}|\mathbf{M}$, the mean values are much higher in the grid cells where we have observed trees. In Figure \ref{fig:500_realizations}c and Figure \ref{fig:500_realizations}d, we see that the standard deviation for $\mathbf{N}$ is approximately constant across the grid, but the standard deviation for $\mathbf{N}|\mathbf{M}$ is smaller towards areas where the observation probabilities are higher. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Part 4 - Repulsive point processes
+We consider the biological cell count data displayed in Figure \ref{fig:point_patterns}c, which showed signs of repulsion. We will attempt to model the data using a Strauss process with a fixed number of points and the pair-potential function
+$$\phi(r) = \begin{cases}\beta, \quad r \leq r_0 \\ 0, \quad r > r_0\end{cases}$$
+The model parameters to be considered are
+
+* $r_0$: when points are less than $r_0$ apart, there is an interaction between them. When points are further than $r_0$ apart, the interaction between them are $0$.
+ 
+* $\beta$: this parameter determines the strength of the interaction between points, e.g. $\beta = \infty$ would give the Gibbs hard-core process, where points cannot be closer than $r_0$. A smaller $\beta$ increases the probability that points are closer together. 
+
+Potential border problems arise when using a bounded observation window $W \subset \mathbb{R}^2$. If there exists a point outside of $W$ that is less than $r_0$ away from the boundary, there might be some point within $W$ that should be affected by the point outside $W$. We will ignore this potential boundary issue. 
+
+We make a rough guess of the parameters by looking at Figure \ref{fig:point_patterns}c. The points are spaced relatively equally apart, but it is clear that some are closer than others, so we set $\beta \approx 10$. For $r_0$, we look at the points at the bottom from $x=0.5$ to $x = 0.75$, and estimate $r_0 \approx 0.13$. Using these two parameters, we simulate $100$ realizations and create an estimated 90% prediction interval using the empirical L-function of each realization, which we compare to the empirical L-function of the data. The results are shown in Figure \ref{fig:strauss1}.
+
+```{r strauss1,fig.cap='Estimated prediction intervals, with the empirical L-function of the data.',out.width='.60\\linewidth', fig.asp=1, fig.ncol = 1,fig.align = "center",echo = F}
+simulate_strauss <- function(beta,r0){
+  ppregion(xl = 0, xu = 1, yl = 0, yu = 1)
+  locations <- Strauss(42, c = exp(-beta),r0)
+  Lfn <- Kfn(locations,1)
+  Lfns <- matrix(NA,nrow = 100,ncol = length(Lfn$y))
+  Lfns[1,] <- Lfn$y
+
+  for (i in 2:100){
+    locations <- Strauss(42, c = exp(-beta),r0)
+    Lfns[i,] <- Kfn(locations,1)$y
+  }
+  quant.l <- colQuantiles(Lfns,probs = 0.05)
+  quant.u <- colQuantiles(Lfns,probs = 0.95)
+  return (list(lower = quant.l, upper = quant.u))
+}
+
+beta <- 10
+r0 <- 0.13
+
+est <- simulate_strauss(beta,r0)
+plot(Lfn.cell$x,Lfn.cell$y,xlab = "r",ylab = "L(r)",col = "black")
+lines(Lfn.cell$x,est$lower, col = "red",lty = "dashed")
+lines(Lfn.cell$x,est$upper,col = "red",lty = "dashed")
+legend("topleft", legend=c("L-function cell data","Estimated 90% prediction intervals"), col=c("black","red"), lty = c(NA,1),pch = c(1,NA),cex = 1, lw=2, inset=0.1, box.lty=0)
+```
+The estimated 90% prediction interval does not fit the empirical L-function very well. We therefore make a guess on new values for the parameters, by setting $\beta = 6$ and $r_0 = 0.11$. We repeat the procedure from above and display the new results in Figure \ref{fig:strauss2}.
+```{r strauss2,fig.cap='Estimated prediction intervals, with the empirical L-function of the data.',out.width='.60\\linewidth', fig.asp=1, fig.ncol = 1,fig.align = "center",echo = F}
+beta <- 6
+r0 <- 0.11
+
+est <- simulate_strauss(beta,r0)
+plot(Lfn.cell$x,Lfn.cell$y,xlab = "r",ylab = "L(r)",col = "black")
+lines(Lfn.cell$x,est$lower, col = "red",lty = "dashed")
+lines(Lfn.cell$x,est$upper,col = "red",lty = "dashed")
+legend("topleft", legend=c("L-function cell data","Estimated 90% prediction intervals"), col=c("black","red"), lty = c(NA,1),pch = c(1,NA),cex = 1, lw=2, inset=0.1, box.lty=0)
+```
+In Figure \ref{fig:strauss2}, we see that the 90% prediction intervals fails to capture most of the points in the empirical L-function of the data - however, after some trial and error, these were the best parameters we were able to find. This leads us to conclude that a Strauss process is too simple of a model for modelling the cell data. One possible modification would be to include more parameters to model the interaction between cells. Another modification we might consider making is to include boundary effects, since the data most likely has these effects. 
+
+In Figure \ref{fig:strauss3}, the biological data set is displayed, along with three realizations from the Strauss process with $\beta = 6$ and $r_0 = 0.11$. 
+```{r strauss3,fig.cap='The biological cell data compared to three different realizations of the Strauss process.', fig.subcap = c("Biological cell data","One realization","One realization","One realization"),out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,fig.align = "center",echo = F}
+beta <- 6
+r0 <- 0.11
+
+set.seed(420)
+ggplot(cell, aes(x, y), asp=1) + geom_point(size=3, col = "forestgreen") +
+  theme(text=element_text(size=18)) 
+ggplot(as.data.frame(Strauss(42,c = exp(-beta),r0)[-3]), aes(x, y), asp=1) +  geom_point(size=3) +
+  theme(text=element_text(size=18)) 
+
+ggplot(as.data.frame(Strauss(42,c = exp(-beta),r0)[-3]), aes(x,y),asp=1) + geom_point(size=3) +
+  theme(text=element_text(size=18)) 
+
+ggplot(as.data.frame(Strauss(42,c = exp(-beta),r0)[-3]), aes(x,y), asp = 1) + geom_point(size=3) +
+  theme(text=element_text(size=18)) 
+```
+The realizations are rather similar to the data. A few points might be a bit closer together in the realizations than in the data, but overall, the Strauss process seems to generate realizations which are similar to that of the biological cell data.   

@@ -1,0 +1,454 @@
+---
+title: "TMA4250 - Project 3"
+author: "Jakob Heide and Bendik Waade"
+output:
+  pdf_document:
+    fig_caption: yes
+    includes:
+      in_header: my_header.tex
+date: "2024-03-11"
+header-includes: \usepackage{subfig}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+library(MASS)
+library(rbenchmark)
+library(boot)
+set.seed(420)
+```
+
+# Part 1
+We consider two subdivisions of Nigeria, referred to as admin1 (37 areas) and admin2 (775 areas). Using each area as a node and connecting areas that share a border gives rise to a graph for each of the subdivisions, which we refer to as the admin1 graph and the admin2 graph. 
+
+## 1a)
+The Besag model is an improper Gaussian Markov random field (GMRF) with respect to a connected graph, and it is defined through the probability density function
+\begin{equation}f(\boldsymbol{x};\tau) \propto \tau^{\frac{n-1}{2}} \exp(-\frac{\tau}{2}\sum_{i\sim j}(x_i - x_j)^2), \ \boldsymbol{x} \in \mathbb{R}^n, \label{eq:besag}\end{equation}
+where $\tau > 0$ is the precision parameter.
+To construct the improper precision matrix of the Besag model, we can use the graph matrix and the method of matching coefficients. We want an expression on the form
+\begin{equation}\exp(-\frac{1}{2}\boldsymbol{x}^T\mathbf{Q}\boldsymbol{x}) \Leftrightarrow \exp(-\frac{1}{2}\sum_{i=1}^n\sum_{j=1}^n x_i\text{Q}_{ij}x_j)\label{eq:match}\end{equation}
+
+To match the coefficients in Equation \ref{eq:besag} and Equation \ref{eq:match}, we note the different cases that arise:
+
+* When there is no relation between $i$ and $j$, there is no cross term between $x_i$ and $x_j$ in Equation \ref{eq:besag}, and so $\text{Q}_{ij} = 0$. 
+
+* When there is a relation between $i$ and $j$, we get two terms in Equation \ref{eq:match} of the form $x_i\text{Q}_{ij}x_j$, and one term in Equation \ref{eq:besag} of the form $-2\tau x_ix_j$, i.e. $Q_{ij} = -\tau$. 
+
+* When $i = j$, there is one term of the form $x_i^2\text{Q}_{ii}$ in Equation \ref{eq:match}. If node $i$ has three neighbours in total, there will be three $\tau x_i^2$ terms in Equation \ref{eq:besag}. Thus, $Q_{ii} = \tau|ne(i)|$.
+
+This means that we can construct the precision matrix by setting all the non-negative elements of the graph matrix equal to -1, setting the diagonal equal to $\{|ne(i)|\}_{i = 1,2,\dots,n}$, and multiplying all entries by the precision parameter $\tau$. We denote by $\mathbf{R}_1$ and $\mathbf{R}_2$ the structure matrices of the admin1 and admin2 areas, respectively, such that $\mathbf{Q}_1 = \tau_1 \mathbf{R}_1$ and $\mathbf{Q}_2 = \tau_2 \mathbf{R}_2$. The dimension of the precision matrices are equal to the number of areas in each subdivision, that is, $\mathbf{Q}_1 \in \mathbb{R}^{37\times 37}$ and $\mathbf{Q}_2 \in \mathbb{R}^{775\times775}$. We note that if we add all the columns or rows in one of the precision matrices together, we get a vector of zeroes. This indicates that the precision matrices have rank $n-1$. 
+
+We calculate the precision matrices for the admin1 graph and the admin2 graph. The percentage of non-zero elements in each precision matrix is shown below. 
+```{r,echo = F}
+setwd("C://Users//jkbhe//OneDrive//Documents//TMA4250 Spatial//Project 3")
+
+adm1graph <- read.table("Admin1Graph.txt")
+adm2graph <- read.table("Admin2Graph.txt")
+
+diagonal <- colSums(adm1graph)
+Q1 <- as.matrix(adm1graph)*-1
+diag(Q1) <- diagonal
+
+
+diagonal <- colSums(adm2graph)
+Q2 <- as.matrix(adm2graph)*-1
+diag(Q2) <- diagonal
+
+nonzeroQ1 <- 100*sum(colSums(Q1 != 0))/(length(Q1))
+cat("The precision matrix of the admin1 graph has ",nonzeroQ1,"% nonzero entries.")
+
+nonzeroQ2 <- 100*sum(colSums(Q2 != 0))/(length(Q2))
+cat("The precision matrix of the admin2 graph has ",nonzeroQ2,"% nonzero entries.")
+
+```
+We display the sparsity pattern for each the precision matrices.
+
+```{r sparsity,fig.cap = "Sparsity patterns for the precision matrices of the Besag model. ",fig.subcap = c("The admin1 graph","The admin2 graph"),out.width = ".49\\linewidth",fig.asp = 1, fig.ncol = 2, fig.align = "center",echo = F}
+image((Q1 != 0),col = c("white","black"),ylim = c(1,0))
+image((Q2 != 0),col = c("white","black"),ylim = c(1,0))
+```
+
+
+```{r,echo = F}
+sample_gmrf <- function(Q,epsilon, L = F){
+  #Q: rank n-1 spsd matrix 
+  #epsilon: small number
+  #L: option to precompute L^(-T) if many samples are needed
+  n <- dim(Q)[1]
+  Lt = Q
+  z <- rnorm(n)
+  v = Lt %*% z
+  
+  if (!L){ 
+    Q_perturbed <- Q + epsilon*diag(n)
+    Lt <- chol(Q_perturbed)
+    v <- solve(Lt,z)
+  }
+  
+  x <- v - mean(v)*rep(1,n)
+  return (x)
+}
+```
+
+```{r,echo = F}
+source("functions(2)(1).R")
+load("Admin1Geography(2).Rdata")
+load("Admin2Geography(2).Rdata")
+```
+
+## 1b)
+To simulate from the Besag model, it only makes sense to simulate from the proper part of the GMRF. The Besag model is an intrinsic GMRF of first order, which means that 
+\begin{align*}\mathbf{Q}\begin{pmatrix}1\\ \vdots \\1\end{pmatrix} = \boldsymbol{0}\end{align*}. This gives a sum-to-zero constraint on the samples. 
+The algorithm used is presented in short here:
+\begin{enumerate}
+\item Set $\tilde{\mathbf{Q}} = \mathbf{Q} + \epsilon\mathbf{I}_n $ and compute $\tilde{\mathbf{L}}$ such that $\tilde{\mathbf{Q}} = \tilde{\mathbf{L}}\tilde{\mathbf{L}}^T$
+\item Sample $\boldsymbol{z} \sim \mathcal{N}_n (\boldsymbol{0},\mathbf{I}_n)$
+\item Solve $\tilde{\mathbf{L}}\boldsymbol{v} = \boldsymbol{z}$
+\item Compute $\boldsymbol{x} = \boldsymbol{v} - \text{mean}(\boldsymbol{v})\begin{pmatrix}1 &\cdots& 1\end{pmatrix}^T$
+\end{enumerate}
+
+The sum-to-zero constraint becomes apparent in step 4 of the algorithm. The resulting sample is a sample from the proper part of the GMRF. We generate two realizations from the Besag model, and two realizations from the multivariate standard Gaussian distribution.
+```{r,eval = F,echo = F}
+plotAreaCol("adm1real1.png",15,15,sample_gmrf(Q1,1e-7),nigeriaAdm1,"Response",colLim = c(-3.5,3.5))
+plotAreaCol("adm1norm1.png",15,15,rnorm(37),nigeriaAdm1,"Response",colLim = c(-3.5,3.5))
+plotAreaCol("adm1real2.png",15,15,sample_gmrf(Q1,1e-7),nigeriaAdm1,"Response",colLim = c(-3.5,3.5))
+plotAreaCol("adm1norm2.png",15,15,rnorm(37),nigeriaAdm1,"Response",colLim = c(-3.5,3.5))
+```
+
+```{r adm1realizations,fig.cap='Two realizations of the Besag model (left) and of the multivariate normal (right) for the admin1 area.', fig.subcap = c("Besag, realization 1","Normal, realization 1","Besag, realization 2","Normal, realization 2"), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+knitr::include_graphics("adm1real1.png")
+knitr::include_graphics("adm1norm1.png")
+knitr::include_graphics("adm1real2.png")
+knitr::include_graphics("adm1norm2.png")
+```
+In Figure \ref{fig:adm1realizations}, we see that the normal realizations indicate no correlation between the areas. The Besag realizations clearly indicate some spatial correlation, as the values in different areas are not so far apart, especially when the areas are close together. All of the realizations seem to have a mean value around zero.
+
+## 1c)
+We repeat the previous exercise, but for the admin2 area.
+```{r,eval = F,echo = F}
+plotAreaCol("adm2real1.png",15,15,sample_gmrf(Q2,1e-7),nigeriaAdm2,"Response",colLim = c(-3.5,3.5))
+plotAreaCol("adm2norm1.png",15,15,rnorm(775),nigeriaAdm2,"Response",colLim = c(-3.5,3.5))
+plotAreaCol("adm2real2.png",15,15,sample_gmrf(Q2,1e-7),nigeriaAdm2,"Response",colLim = c(-3.5,3.5))
+plotAreaCol("adm2norm2.png",15,15,rnorm(775),nigeriaAdm2,"Response",colLim = c(-3.5,3.5))
+```
+
+```{r adm2realizations,fig.cap='Two realizations of the Besag model (left) and of the multivariate normal (right).', fig.subcap = c("Besag, realization 1","Normal, realization 1","Besag, realization 2","Normal, realization 2"), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = F}
+knitr::include_graphics("adm2real1.png")
+knitr::include_graphics("adm2norm1.png")
+knitr::include_graphics("adm2real2.png")
+knitr::include_graphics("adm2norm2.png")
+```
+
+In Figure \ref{fig:adm2realizations}, we see the realizations of the Besag model and the multivariate Gaussian on the admin2 area. The spatial correlation of the Besag model becomes even more clear - when there are many small areas close together, the correlation creates a smoothing effect. In addition, the randomness of the Gaussian distribution is also perhaps more pronounced, as small areas can suddenly get spikes in values.
+
+## 1d)
+We simulate $100$ realizations and compute the empirical variance in each of the areas in the admin2 subdivision. 
+```{r var, fig.cap = 'Empirical variance from 100 realizations of the Besag model.',out.width='0.7\\linewidth',fig.asp = 1,fig.align = "center",echo = F}
+#Generate 100 realizations and calculate empirical variance
+real_mat <- matrix(NA, nrow = 100,ncol = 775)
+L_inv <- solve(chol(Q2 + 1e-7*diag(775)))
+for (i in 1:100){
+  real_mat[i,] <- sample_gmrf(L_inv,1e-7,L = T)
+}
+variances <- apply(real_mat,2,var) #Column-wise variance
+plotAreaCol("adm2var.png",15,15,variances,nigeriaAdm2,"Variance")
+knitr::include_graphics("adm2var.png")
+```
+Figure \ref{fig:var} shows clear signs of non-stationarity for the Besag model. Areas that are close to the boundary have fewer neighbours, and so they are allowed to fluctuate more in value, i.e. they have higher variance than areas towards the center. 
+
+
+```{r cor, fig.cap = 'Empirical correlation between Gubio (area 150) and the rest.',out.width = '0.7\\linewidth', fig.asp = 1, fig.align = "center", echo = F}
+#Calculate empirical correlation between area 150 and the rest
+cor150 <- as.numeric(cor(real_mat[,150],real_mat))
+
+plotAreaCol("adm150cor.png",15,15,cor150,nigeriaAdm2,"Correlation")
+knitr::include_graphics("adm150cor.png")
+```
+
+Figure \ref{fig:cor} displays the correlation between the Gubio area (to the top right) and the rest of the areas. The Besag model satisfies the pairwise Markov property, but since the GMRF is a positive distribution, the Besag model also satisfies the local and global Markov properties. This means that the value in Gubio is correlated with all the other areas. The correlation decreases the further away we are from Gubio. We have negative correlations in areas far from Gubio due to the sum-to-zero constraint. 
+
+# Part 2
+We consider the estimation of vaccine coverages for children in the 37 admin1 areas. Let $p_a$ be the true number of vaccinated children, for $a = 1,\dots,37$, and $\hat{P_a}$ be the estimator for $p_a$. We assume that 
+\begin{align*}\text{logit}(\hat{P}_a) \sim \mathcal{N}(\text{logit}(p_a),V_a), \ a= 1,\dots,37,\end{align*}
+where $V_1,\dots,V_{37}$ are known variances and $\hat{P}_1,\dots,\hat{P}_{37}$ are independent. Let $\boldsymbol{X} = (\text{logit}(P_1),\dots,\text{logit}(P_{37}))^T$ and $\boldsymbol{Y} = (\text{logit}(\hat{P}_1),\dots,\text{logit}(\hat{P}_{37}))^T$.
+
+We display the observed proportions of vaccinations in Figure \ref{fig:obsprop}.
+```{r,echo = F}
+df <- read.table("DirectEstimates.txt",header = T)
+```
+
+## 2a)
+```{r,echo = F}
+plotAreaCol("observed_prop.png",15,15,inv.logit(df[,2]),nigeriaAdm1,"Obs. prop")
+```
+```{r obsprop, fig.cap = 'Observed proportion of children vaccinated in each area.',fig.asp = 1, fig.align = "center",out.width = '0.7\\linewidth', echo = F}
+knitr::include_graphics("observed_prop.png")
+```
+The goal of our model is to estimate the true proportions based on the observed proportions. In Figure \ref{fig:obsprop}, the observed proportions are higher towards the lower left areas, and smaller towards the upper left. This indicates some spatial correlation, so including some spatial correlation in our model to reduce uncertainty seems reasonable. 
+
+## 2b)
+We have that $Y_a \sim N(\text{logit}(p_a), V_a), \ a = 1,\dots,37$, but we view $X_a = \text{logit}(p_a)$ as a stochastic variable. That is, the distribution of the conditional $\boldsymbol{Y}|\boldsymbol{X}$ is
+\begin{align*}\boldsymbol{Y}|\boldsymbol{X} = \boldsymbol{x} \sim \mathcal{N}_{37}(\boldsymbol{x},\mathbf{V}), \end{align*}
+where $\mathbf{V}$ is a diagonal matrix with elements $V_a, \ a = 1,\dots,37.$ 
+
+We want to find the distribution of $\boldsymbol{X}|\boldsymbol{Y}$, when we assume a priori that $\boldsymbol{X} \sim \mathcal{N}_{37}(\mathbf{0},\sigma^2\mathbf{I}_{37})$. We write $\mathbf{Q}_1^{-1} = \sigma^2\mathbf{I}_{37}$ and $\mathbf{Q}_2^{-1} = \mathbf{V}$ in the following.
+
+The joint distribution of $\boldsymbol{X}$ and $\boldsymbol{Y}$ can be written as
+\begin{align*}f(\boldsymbol{x},\boldsymbol{y}) = f(\boldsymbol{x})f(\boldsymbol{y}|\boldsymbol{x}) \\ \propto \exp(-\frac{1}{2}\boldsymbol{x}^T\mathbf{Q}_1\boldsymbol{x})\cdot\exp(-\frac{1}{2}(\boldsymbol{y}-\boldsymbol{x})^T\mathbf{Q}_2(\boldsymbol{y}-\boldsymbol{x})) \\ = \exp(-\frac{1}{2}\boldsymbol{x}^T(\mathbf{Q}_1+\mathbf{Q}_2)\boldsymbol{x} - 2\boldsymbol{x}^T\mathbf{Q}_2\boldsymbol{y} + \boldsymbol{y}^T\mathbf{Q}_2\boldsymbol{y})\end{align*}
+We know that the joint density should be proportional to an expression on the form
+\begin{align*}f(\boldsymbol{x},\boldsymbol{y}) \propto \exp(-\frac{1}{2}\begin{pmatrix}\boldsymbol{x}^T & \boldsymbol{y}^T\end{pmatrix}\begin{pmatrix}\mathbf{Q}_{\boldsymbol{X}\boldsymbol{X}} & \mathbf{Q}_{\boldsymbol{X}\boldsymbol{Y}} \\ \mathbf{Q}_{\boldsymbol{Y}\boldsymbol{X}} & \mathbf{Q}_{\boldsymbol{Y}\boldsymbol{Y}} \end{pmatrix}\begin{pmatrix}\boldsymbol{x} \\ \boldsymbol{y}\end{pmatrix})\end{align*} 
+\begin{equation}
+= \exp(-\frac{1}{2}(\boldsymbol{x}^T\mathbf{Q}_{\boldsymbol{X}\boldsymbol{X}}\boldsymbol{x} + 2\boldsymbol{x}^T\mathbf{Q}_{\boldsymbol{X}\boldsymbol{Y}}\boldsymbol{y}+\boldsymbol{y}^T\mathbf{Q}_{\boldsymbol{Y}\boldsymbol{Y}}\boldsymbol{y}))\label{eq:matching}\end{equation}
+By matching the coefficients in the two terms, we find that
+\begin{align*}\mathbf{Q}_{\boldsymbol{X}\boldsymbol{X}} = \mathbf{Q}_1 + \mathbf{Q}_2 \\ \mathbf{Q}_{\boldsymbol{X}\boldsymbol{Y}} = \mathbf{Q}_{\boldsymbol{Y}\boldsymbol{X}} = -\mathbf{Q}_2 \\ \mathbf{Q}_{\boldsymbol{Y}\boldsymbol{Y}} = \mathbf{Q}_2\end{align*}
+Thus, $\boldsymbol{X}|\boldsymbol{Y}$ is a GMRF with expected value
+\begin{align*}\boldsymbol{\mu}_{\boldsymbol{X}|\boldsymbol{Y}} = (\mathbf{Q}_1+\mathbf{Q}_2)^{-1}\mathbf{Q}_2\boldsymbol{y} \\ = (\frac{1}{\sigma^2}\mathbf{I}_{37}+\mathbf{V}^{-1})^{-1}\mathbf{V}^{-1}\boldsymbol{y}\end{align*}
+and precision matrix
+\begin{align*}\mathbf{Q}_{\boldsymbol{X}|\boldsymbol{Y}} = \mathbf{Q}_1 + \mathbf{Q}_2 \\ = \frac{1}{\sigma^2}\mathbf{I}_{37}+\mathbf{V}^{-1}\end{align*}
+In the case that $\sigma^2 \rightarrow \infty$, we obtain
+\begin{align*}\lim_{\sigma^2 \rightarrow \infty}\mu_{\boldsymbol{X}|\boldsymbol{Y}} = \boldsymbol{y} \\ \lim_{\sigma^2 \rightarrow \infty}\mathbf{Q}_{\boldsymbol{X}|\boldsymbol{Y}} = \mathbf{V}^{-1}\end{align*}
+Since $\boldsymbol{X}|\boldsymbol{Y}$ follows a Gaussian distribution, we know that $\text{expit}(\boldsymbol{X}|\boldsymbol{Y})$ follows a logit-normal distribution. The inverse logit (expit) transform of $\boldsymbol{X}$ gives the vector $(P_1,P_2,\dots,P_{37})$, so the marginal distributions are
+\begin{align*}P_a|\boldsymbol{Y}=\boldsymbol{y} \sim \text{Logitnormal}(y_a,V_a), \ a = 1,\dots,37.\end{align*}
+We simulate $100$ realizations with $\sigma^2 = 100^2$, and compute the median and coefficient of variation for each of the areas.
+```{r,echo  = F}
+#Computing the median and the coefficient of variation
+sigma <- 100^2
+V_inv <- diag(1/df[,3]^2)
+Q <- (1/sigma)*diag(37) + V_inv
+mu <- solve(Q) %*% V_inv %*% df[,2]
+#Precompute
+L_inv <- solve(chol(Q))
+
+realz <- matrix(NA, nrow = 100,ncol = 37)
+for (i in 1:100){
+  sample <- rnorm(37)
+  sample <- L_inv %*% sample
+  realz[i,] <- inv.logit(sample + mu)
+}
+
+median_vals <- apply(realz, 2, median)
+coeff_of_var <- apply(realz,2,sd) / apply(realz,2,mean)
+```
+
+```{r,echo = F}
+plotAreaCol("median.png",15,15,median_vals,nigeriaAdm1,"Median",colLim = c(0,1))
+plotAreaCol("coeff_var.png",15,15,coeff_of_var,nigeriaAdm1,"CV",colLim = c(0,0.4))
+```
+
+```{r median,fig.cap = 'Median values (left) and coefficient of variation (CV) (right).',fig.subcap = c("",""),fig.asp = 1, fig.align = "center",fig.ncol = 2,out.width = '0.49\\linewidth', echo = F}
+knitr::include_graphics("median.png")
+knitr::include_graphics("coeff_var.png")
+```
+In Figure \ref{fig:median}a, we see that the estimated median proportions are higher towards the lower left and smaller towards the upper left, which is similar to that of the observed proportions. The area with the lowest median value also has the highest coefficient of variation, as seen in Figure \ref{fig:median}b. Overall, the estimated median values seem to be very similar to that of the observed proportions in Figure \ref{fig:obsprop}. We assumed a prior with no spatial correlation and high variance, so it makes sense that the estimated proportions are similar to the observed proportions. 
+
+## 2c)
+
+We place another prior on $\boldsymbol{X}$, namely the Besag model, which we defined in Equation \ref{eq:besag}. We repeat the procedure from above of matching coefficients.
+
+The joint density takes the form 
+\begin{align*}f(\boldsymbol{x},\boldsymbol{y}) = f(\boldsymbol{x})f(\boldsymbol{y}|\boldsymbol{x}) \\ \propto \exp(-\frac{1}{2}(\boldsymbol{x}^T(\tau \mathbf{R}_1 + \mathbf{V})\boldsymbol{x} - 2\boldsymbol{y}^T\mathbf{V}^{-1}\boldsymbol{x} + \boldsymbol{y}^T \mathbf{V}^{-1}\boldsymbol{y})),\end{align*}
+which we match to the expression in Equation \ref{eq:matching}. We find
+\begin{align*}\mathbf{Q}_{\boldsymbol{X}\boldsymbol{X}} = \tau \mathbf{R}_1 + \mathbf{V}^{-1} \\ \mathbf{Q}_{\boldsymbol{X}\boldsymbol{Y}} = \mathbf{Q}_{\boldsymbol{Y}\boldsymbol{X}} = -\mathbf{V}^{-1} \\ \mathbf{Q}_{\boldsymbol{Y}\boldsymbol{Y}} = \mathbf{V}^{-1}\end{align*}
+Thus, $\boldsymbol{X}|\boldsymbol{Y}=\boldsymbol{y}$ is normally distributed with expected value
+\begin{align*}\boldsymbol{\mu}_{\boldsymbol{X}|\boldsymbol{Y}} = (\tau \mathbf{R}_1 + \mathbf{V}^{-1})^{-1}\mathbf{V}^{-1}\boldsymbol{y},\end{align*}
+and precision matrix
+\begin{align*}\mathbf{Q}_{\boldsymbol{X}|\boldsymbol{Y}} = \tau \mathbf{R}_1 + \mathbf{V}^{-1}\end{align*}
+This is a proper GMRF, since the matrix $\mathbf{V}^{-1}$ has full rank. We simulate $100$ realizations with $\tau = 1$ and calculate the median and coefficient of variation in each of the areas.
+```{r, echo = F}
+Vinv <- diag(1/df[,3]^2)
+Q <- Q1 + Vinv
+Linv <- solve(chol(Q))
+mu <- solve(Q) %*% Vinv %*% df[,2]
+
+realz <- matrix(NA, nrow = 100,ncol = 37)
+for (i in 1:100){
+  sample <- rnorm(37)
+  x <- Linv %*% sample
+  realz[i,] <- inv.logit(x + mu)
+}
+
+median_vals <- apply(realz, 2, median)
+coeff_of_var <- apply(realz,2,sd) / apply(realz,2,mean)
+```
+
+```{r,echo = F}
+plotAreaCol("median2.png",15,15,median_vals,nigeriaAdm1,"Median",colLim = c(0,1))
+plotAreaCol("coeff_var2.png",15,15,coeff_of_var,nigeriaAdm1,"CV",colLim = c(0,0.4))
+```
+
+```{r median2,fig.cap = 'Median values (left) and coefficient of variation (CV) (right).',fig.subcap = c("",""),fig.asp = 1, fig.align = "center",fig.ncol = 2,out.width = '0.49\\linewidth', echo = F}
+knitr::include_graphics("median2.png")
+knitr::include_graphics("coeff_var2.png")
+```
+Figure \ref{fig:median2} shows the effect of the Besag prior and the spatial correlation. If we compare Figure \ref{fig:median}b to Figure \ref{fig:median2}b, we see that the variance is slightly lower across most of the areas, if not all. The median values are also smoother in Figure \ref{fig:median2}a compared to Figure \ref{fig:median}a, which we attribute to the spatial correlation in the Besag prior.
+
+## 2d)
+
+We imagine that an independent survey gave rise to a much more precise estimate of the proportion in Kaduna. We assume that $Y_{38}|P_{Kaduna} \sim \mathcal{N}(\text{logit}(P_{Kaduna}),0.1^2)$ and that $Y_{38}|\boldsymbol{P}$ is independent of $\boldsymbol{Y}|\boldsymbol{P}$. Let $\tilde{\boldsymbol{Y}} = (Y_1, \dots, Y_{37},Y_{38})^T.$ Then, 
+\begin{align*}\boldsymbol{\tilde{Y}}|\boldsymbol{X} = \boldsymbol{x} \sim \mathcal{N}_{38}(\mathbf{M}\boldsymbol{x}, \mathbf{\tilde{V}}),\end{align*}
+where $\mathbf{M}\in \mathbb{R}^{38\times37}$ is the identity matrix with an extra row, $(0,\dots,0,1,0,\dots,0)$, on the bottom. The only non-zero element $1$ is placed on index 19, which corresponds to the Kaduna area. In addition, $\mathbf{\tilde{V}} \in \mathbb{R}^{38\times38}$ is the diagonal matrix with elements $V_a, \ a = 1,\dots,37$ and $V_{38} = 0.1^2$.
+
+We place the same Besag prior on $\boldsymbol{X}$ as before, and repeat the procedure of matching coefficients. The joint density takes the form
+\begin{align*}f(\boldsymbol{x},\boldsymbol{\tilde{y}}) = f(\boldsymbol{x})f(\boldsymbol{\tilde{y}}|\boldsymbol{x}) \\ \propto \exp(-\frac{1}{2}(\boldsymbol{x}^T\tau \mathbf{R}_1\boldsymbol{x} + (\boldsymbol{\tilde{y}} - \mathbf{M}\boldsymbol{x})^T\mathbf{\tilde{V}}^{-1}(\boldsymbol{\tilde{y}} - \mathbf{M}\boldsymbol{x}) )) \\
+= \exp(-\frac{1}{2}(\boldsymbol{x}^T(\tau \mathbf{R}_1 + \mathbf{M}^T\mathbf{\tilde{V}}^{-1}\mathbf{M})\boldsymbol{x} - 2\boldsymbol{\tilde{y}}^T\mathbf{\tilde{V}}^{-1}\mathbf{M}\boldsymbol{x} + \boldsymbol{\tilde{y}}^T \mathbf{\tilde{V}}^{-1}\boldsymbol{\tilde{y}})),\end{align*}
+which we match with Equation \ref{eq:matching}. We find
+\begin{align*}\mathbf{Q}_{\boldsymbol{X}\boldsymbol{X}} = \tau \mathbf{R}_1 + \mathbf{M}^T\mathbf{\tilde{V}}^{-1}\mathbf{M} \\ \mathbf{Q}_{\boldsymbol{Y}\boldsymbol{X}} = \mathbf{Q}_{\boldsymbol{X}\boldsymbol{Y}}^T = -\mathbf{\tilde{V}}^{-1}\mathbf{M} \\ \mathbf{Q}_{\boldsymbol{Y}\boldsymbol{Y}} = \mathbf{\tilde{V}}^{-1}\end{align*}
+Thus, $\boldsymbol{X}|\boldsymbol{\tilde{Y}}=\boldsymbol{\tilde{y}}$ is a GMRF with expected value 
+\begin{align*}\boldsymbol{\mu}_{\boldsymbol{X}|\boldsymbol{\tilde{Y}}} = (\tau \mathbf{R}_1 + \mathbf{M}^T\mathbf{\tilde{V}}^{-1}\mathbf{M})^{-1}\mathbf{M}^T\mathbf{\tilde{V}}^{-1}\boldsymbol{\tilde{y}}\end{align*}
+and precision matrix \begin{align*}\mathbf{Q}_{\boldsymbol{X}|\boldsymbol{\tilde{Y}}} = \tau \mathbf{R}_1 + \mathbf{M}^T\mathbf{\tilde{V}}^{-1}\mathbf{M}\end{align*}
+The precision matrix has full rank, since $\mathbf{\tilde{V}}$ is positive definite, so $\boldsymbol{X}|\boldsymbol{\tilde{Y}}=\boldsymbol{\tilde{y}}$ is a proper GMRF. 
+```{r,echo = F}
+M <- diag(37)
+newrow <- rep(0,37)
+newrow[19] <- 1
+M <- rbind(M,newrow)
+V_tilde_inv <- diag(1/c(df[,3]^2,0.1^2))
+
+Q <- Q1 + t(M) %*% (V_tilde_inv) %*% M
+
+mu <- solve(Q) %*% t(M) %*% (V_tilde_inv) %*% c(df[,2],0.5)
+#Precompute 
+Linv <- solve(chol(Q))
+
+realz <- matrix(NA, nrow = 100,ncol = 37)
+for (i in 1:100){
+  sample <- rnorm(37)
+  x <- Linv %*% sample
+  realz[i,] <- inv.logit(x + mu)
+}
+
+median_vals <- apply(realz, 2, median)
+coeff_of_var <- apply(realz,2,sd) / apply(realz,2,mean)
+```
+
+```{r,echo = F}
+plotAreaCol("median3.png",15,15,median_vals,nigeriaAdm1,"Median",colLim = c(0,1))
+plotAreaCol("coeff_var3.png",15,15,coeff_of_var,nigeriaAdm1,"CV",colLim = c(0,0.4))
+```
+
+```{r median3,fig.cap = 'Median values (left) and coefficient of variation (CV) (right).',fig.subcap = c("",""),fig.asp = 1, fig.align = "center",fig.ncol = 2,out.width = '0.49\\linewidth', echo = F}
+knitr::include_graphics("median3.png")
+knitr::include_graphics("coeff_var3.png")
+```
+In Figure \ref{fig:median3}, we see that the Kaduna region (large region in the center), has gained much lower variance with the inclusion of the extra survey. The surrounding regions also gain lower variance through the spatial correlation of the Besag prior. The median value of the Kaduna region is also lower than in the previous models. The other areas seem to have similar median values as before.
+
+## 2e)
+We investigate the effect of the precision parameter $\tau$ by repeating part 2c) for parameters $\tau = 0.1$ and $\tau = 10$. 
+```{r, echo = F}
+tau = 0.1
+Vinv <- diag(1/df[,3]^2)
+Q <- tau*Q1 + Vinv
+Linv <- solve(chol(Q))
+mu <- solve(Q) %*% Vinv %*% df[,2]
+
+realz <- matrix(NA, nrow = 100,ncol = 37)
+for (i in 1:100){
+  sample <- rnorm(37)
+  x <- Linv %*% sample
+  realz[i,] <- inv.logit(x + mu)
+}
+
+median_vals <- apply(realz, 2, median)
+coeff_of_var <- apply(realz,2,sd) / apply(realz,2,mean)
+```
+
+```{r,echo = F}
+plotAreaCol("median4.png",15,15,median_vals,nigeriaAdm1,"Median",colLim = c(0,1))
+plotAreaCol("coeff_var4.png",15,15,coeff_of_var,nigeriaAdm1,"CV",colLim = c(0,0.5))
+```
+
+```{r, echo = F}
+tau = 10
+Vinv <- diag(1/df[,3]^2)
+Q <- tau*Q1 + Vinv
+Linv <- solve(chol(Q))
+mu <- solve(Q) %*% Vinv %*% df[,2]
+
+realz <- matrix(NA, nrow = 100,ncol = 37)
+for (i in 1:100){
+  sample <- rnorm(37)
+  x <- Linv %*% sample
+  realz[i,] <- inv.logit(x + mu)
+}
+
+median_vals <- apply(realz, 2, median)
+coeff_of_var <- apply(realz,2,sd) / apply(realz,2,mean)
+```
+
+```{r,echo = F}
+plotAreaCol("median5.png",15,15,median_vals,nigeriaAdm1,"Median",colLim = c(0,1))
+plotAreaCol("coeff_var5.png",15,15,coeff_of_var,nigeriaAdm1,"CV",colLim = c(0,0.5))
+```
+
+```{r median4,fig.cap = 'Median values (left) and coefficient of variation (CV) (right).',fig.subcap = c("Median values for $\\tau = 0.1$","CV values for $\\tau = 0.1$","Median values for $\\tau = 10$","CV values for $\\tau = 10$"),fig.asp = 1, fig.align = "center",fig.ncol = 2,out.width = '0.49\\linewidth', echo = F}
+knitr::include_graphics("median4.png")
+knitr::include_graphics("coeff_var4.png")
+knitr::include_graphics("median5.png")
+knitr::include_graphics("coeff_var5.png")
+```
+
+Figure \ref{fig:median4} shows the effect of the precision parameter $\tau$. When we increase the parameter to $\tau = 10$, the coefficient of variation becomes small across all regions, and the range of the median values also becomes smaller. We can view the parameter as weighting the spatial correlation, where higher values of $\tau$ increases the spatial correlation and thus decreases the variance. We note that if we use $\tau = 0$, we get a model where the regions are independent, similar to the model part 2b. It is therefore important to estimate $\tau$ correctly, which we can do by method of maximum likelihood estimation.
+
+## 2f)
+To obtain the log-likelihood $l(\tau ; \boldsymbol{y})$, we use Bayes' rule, which states that
+\begin{align*}f(\boldsymbol{x}|\boldsymbol{y};\tau) = \frac{f(\boldsymbol{y}|\boldsymbol{x};\tau)f(\boldsymbol{x}|\tau)}{f(\boldsymbol{y};\tau)}\end{align*}
+This gives the log-likelihood
+\begin{align*}l(\tau ; \boldsymbol{y}) = \log(f(\boldsymbol{y};\tau) \\ = \log \left(\frac{f(\boldsymbol{y}|\boldsymbol{x})f(\boldsymbol{x};\tau)}{f(\boldsymbol{x}|\boldsymbol{y};\tau)}\right) \\ = \log(f(\boldsymbol{y}|\boldsymbol{x})) + \log(f(\boldsymbol{x};\tau)) - \log(f(\boldsymbol{x}|\boldsymbol{y};\tau))\end{align*}
+We know that $\boldsymbol{Y}|\boldsymbol{X}=\boldsymbol{x} \sim \mathcal{N}_{37}(\boldsymbol{x},\mathbf{V})$, so the first term becomes
+\begin{align*}\log(f(\boldsymbol{y}|\boldsymbol{x};\tau)) \propto \log(\exp(-\frac{1}{2}(\boldsymbol{y}-\boldsymbol{x})^T\mathbf{V}^{-1}(\boldsymbol{y}-\boldsymbol{x}))) \\ = -\frac{1}{2}(\boldsymbol{y}-\boldsymbol{x})^T\mathbf{V}^{-1}(\boldsymbol{y}-\boldsymbol{x})\end{align*}
+The second term is the prior on $\boldsymbol{X}$, which in this case is the Besag model:
+\begin{align*}\log(f(\boldsymbol{x};\tau)) \propto \log(\tau^{\frac{37-1}{2}}\exp(-\frac{1}{2}(\boldsymbol{x}^T(\tau \mathbf{R})\boldsymbol{x}))) \\ = \frac{37-1}{2}\log(\tau) -\frac{1}{2}\boldsymbol{x}^T\tau \mathbf{R}\boldsymbol{x}\end{align*}
+We know that $\boldsymbol{X}|\boldsymbol{Y} = \boldsymbol{y} \sim \mathcal{N}_{37}(\boldsymbol{\mu}_C := (\tau \mathbf{R} + \mathbf{V}^{-1})^{-1}\mathbf{V}^{-1}\boldsymbol{y},\mathbf{Q}_C := \tau \mathbf{R} + \mathbf{V}^{-1})$. The third term becomes
+\begin{align*}\log(f(\boldsymbol{x}|\boldsymbol{y};\tau)) \propto \log(|\mathbf{Q}_C^{-1}|^{-1/2}\exp(-\frac{1}{2}(\boldsymbol{x}-\boldsymbol{\mu}_C)^T\mathbf{Q}_C(\mathbf{x}-\boldsymbol{\mu}_C))) \\ = -\frac{1}{2}\log(|\mathbf{Q}_C^{-1}|)-\frac{1}{2}(\boldsymbol{x}-\boldsymbol{\mu}_C)^T\mathbf{Q}_C(\mathbf{x}-\boldsymbol{\mu}_C)\end{align*}
+Putting all the terms together, we find the log-likelihood
+
+\begin{align*}l(\tau ; \boldsymbol{y}) = \log(f(\boldsymbol{y}|\boldsymbol{x})) + \log(f(\boldsymbol{x};\tau)) - \log(f(\boldsymbol{x}|\boldsymbol{y};\tau)) \\ = -\frac{1}{2}(\boldsymbol{y}-\boldsymbol{x})^T\mathbf{V}^{-1}(\boldsymbol{y}-\boldsymbol{x}) + \frac{37-1}{2}\log(\tau) -\frac{1}{2}\boldsymbol{x}^T\tau \mathbf{R}\boldsymbol{x} \\ -\frac{1}{2}\log(|\mathbf{Q}_C|)+\frac{1}{2}(\boldsymbol{x}-\boldsymbol{\mu}_C)^T\mathbf{Q}_C(\mathbf{x}-\boldsymbol{\mu}_C) + \text{Const}\end{align*}
+We optimize this function to find the maximum likelihood estimate of $\tau$. 
+
+```{r,echo = F}
+data <- read.table("DirectEstimates.txt",header = T)
+loglik <- function(tau){
+  x <- runif(37)
+  y <- data[,2]
+  V_inv <- diag(1/data[,3]^2)
+  Q_c <- tau*Q1 + V_inv
+  mu_c <- solve(Q_c) %*% V_inv %*% y
+  
+  term1 <- -0.5 *t(y-x) %*% V_inv %*% (y-x)
+  term2 <- 18*log(tau) - 0.5*tau*t(x) %*% Q1 %*% x
+  term3 <- -0.5 * log(det(Q_c)) + 0.5*t(x-mu_c) %*% Q_c %*% (x-mu_c)
+  return (-(term1 + term2 + term3))
+}
+
+optimize(loglik,c(0,100))$minimum
+```
+The maximum likelihood estimate of $\tau$ is found to be $\hat{\tau} = 0.8063$. We use this value to again compute the median and coefficient of variations of 100 samples from $P_a | \boldsymbol{Y} = \boldsymbol{y}$.
+
+```{r, echo = F}
+tau = 0.8063
+Vinv <- diag(1/df[,3]^2)
+Q <- tau*Q1 + Vinv
+Linv <- solve(chol(Q))
+mu <- solve(Q) %*% Vinv %*% data[,2]
+
+realz <- matrix(NA, nrow = 100,ncol = 37)
+for (i in 1:100){
+  sample <- rnorm(37)
+  x <- Linv %*% sample
+  realz[i,] <- inv.logit(x + mu)
+}
+
+median_vals <- apply(realz, 2, median)
+coeff_of_var <- apply(realz,2,sd) / apply(realz,2,mean)
+```
+
+```{r,echo = F}
+plotAreaCol("median6.png",15,15,median_vals,nigeriaAdm1,"Median",colLim = c(0,1))
+plotAreaCol("coeff_var6.png",15,15,coeff_of_var,nigeriaAdm1,"CV",colLim = c(0,0.5))
+```
+
+```{r median5,fig.cap = 'Median values (left) and coefficient of variation (CV) (right).',fig.subcap = c("Median values for $\\tau = \\hat{\\tau}$","CV values for $\\tau = \\hat{\\tau}$"),fig.asp = 1, fig.align = "center",fig.ncol = 2,out.width = '0.49\\linewidth', echo = F}
+knitr::include_graphics("median6.png")
+knitr::include_graphics("coeff_var6.png")
+```
+Figure \ref{fig:median5} shows the median values and coefficient of variation for $100$ realizations, using the maximum likelihood estimate of $\tau$. If we compare to Figure \ref{fig:median2}, where we used $\tau = 1$, the results are very similar, but the coefficient of variation is smaller in Figure \ref{fig:median5}. 
