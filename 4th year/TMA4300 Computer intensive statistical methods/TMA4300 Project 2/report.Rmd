@@ -1,0 +1,670 @@
+---
+title: "TMA4300 - Project 2"
+author: "Jakob Heide and Celine Olsson"
+output:
+  pdf_document:
+    fig_caption: yes
+    includes:
+      in_header: my_header.tex
+date: "2024-03-11"
+header-includes: \usepackage{subfig}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+```
+
+```{r}
+load(file = "rain.rda")
+library(boot)
+library(matrixStats)
+library(EfficientMaxEigenpair) #for tridiag setup
+library(MASS)
+library("INLA")
+```
+
+
+# Problem 1
+In this project, we consider a portion of the Tokyo rainfall dataset. The response is whether the amount of rainfall on a given day exceeded 1mm, where the rain has been measured every day in the years 1951 - 1989. That is,
+$$y_t|x_t \sim \text{Bin}(n_t,\pi(x_t)), \quad \pi(x_t) = \frac{1}{1+\exp(-x_t)},$$
+for $n_{60} = 10$ and $n_{t} = 39$, for $t = 1,\dots,59,61,\dots,366$. We assume conditional independence in $y_t|x_t$, for $t = 1,\dots,366$. 
+The plot of the data can be seen in Figure \ref{fig:data}. 
+```{r data,fig.cap='Plot of data', out.width='.49\\linewidth', fig.subcap = c("Number of days with rain >1mm","Fraction of days with rain >1mm"), fig.ncol = 2}
+plot(rain$day, rain$n.rain, type="l", ylab=expression(y[t]), xlab="t")
+plot(rain$day, rain$n.rain/rain$n.years, type="l", ylab=expression(y[t]/n[t]), xlab="t")
+```
+The plot shows that the amount of rainfall tends to increase towards $t\approx 190$, with one period with less rain at approximately $t=220$. If we ignore the trends, the data looks like a random walk. 
+
+
+## 1b)
+Let $\boldsymbol{y} = (y_1,\dots,y_T)^T$, $\boldsymbol{x} = (x_1,\dots,x_T)^T$ and $\boldsymbol{\pi} = (\pi(x_1),\dots,\pi(x_T))^T$. We use the definition of the likelihood to obtain:
+$$L(\boldsymbol{\pi}|\boldsymbol{y},\boldsymbol{x}) = \prod_{t=1}^{366} f(y_t|x_t;n_t,\pi(x_t))\\
+= \prod_{t=1}^{366}{n_t\choose y_t|x_t}\pi(x_t)^{y_t|x_t}(1-\pi(x_t))^{n_t-y_t|x_t}$$
+\begin{equation}
+=\prod_{t=1}^{366}{n_t\choose y_t|x_t}\left(\frac{1}{1+\exp(-x_t)}\right)^{y_t|x_t}\left(\frac{\exp(-x_t)}{1+\exp(-x_t)}\right)^{n_t-y_t|x_t}
+\label{likelihood1}
+\end{equation}
+
+
+
+
+## 1c)
+A Bayesian hierarchical model will be applied to the dataset. A random walk of order 1 will be used to model the trend on a logit scale:
+\begin{align}
+  \label{eq:randomwalk}
+  x_t = x_{t-1} + u_t
+\end{align}
+where $u_t\overset{\text{iid}}{\sim}\mathcal{N}(0,\sigma_u^2)$, such that 
+\begin{align}
+  \label{eq:likelihood_sigma}
+  p(\boldsymbol{x}|\sigma_u^2)\propto \prod_{t=2}^T \frac{1}{\sigma_u}\exp\left(-\frac{1}{2\sigma_u^2}(x_t-x_{t-1})^2\right)
+\end{align}
+The following inverse gamma prior will be placed on $\sigma_u^2$,
+\begin{align}
+  \label{eq:prior_sigma}
+  p(\sigma_u^2) = \frac{\beta^{\alpha}}{\Gamma(\alpha)} \left(\frac{1}{\sigma_u^2}\right)^{\alpha+1}\exp\left(-\frac{\beta}{\sigma_u^2}\right)
+\end{align}
+with shape $\alpha$ and scale $\beta$. 
+
+Now we want to find the conditional $p(\sigma^2_u|\boldsymbol{y},\boldsymbol{x})$. A conditional probability can be written as the joint probability divided by the marginal probability:
+$$p(y|x) = \frac{p(x,y)}{p(x)}$$
+This is used to get the following result: 
+\begin{align*}
+  p(\sigma^2_u|\boldsymbol{y},\boldsymbol{x}) &= \frac{p(\boldsymbol{y},\boldsymbol{x},\sigma_u^2)}{p(\boldsymbol{y},\boldsymbol{x})} = \frac{p(\boldsymbol{y}|\sigma_u^2,\boldsymbol{x})\cdot p(\sigma_u^2,\boldsymbol{x})}{p(\boldsymbol{y},\boldsymbol{x})} \\&= \frac{p(\boldsymbol{y}|\sigma_u^2,\boldsymbol{x})\cdot p(\boldsymbol{x}|\sigma_u^2)\cdot p(\sigma_u^2)}{p(\boldsymbol{y},\boldsymbol{x})} = \frac{p(\boldsymbol{x}|\sigma_u^2)\cdot p(\sigma_u^2)}{p(\boldsymbol{x})} \\&\propto p(\boldsymbol{x}|\sigma_u^2)\cdot p(\sigma_u^2)
+\end{align*}
+
+where $p(\boldsymbol{y}|\sigma_u^2,\boldsymbol{x})=p(\boldsymbol{y}|\boldsymbol{x})$ since $\boldsymbol{y}$ is not dependent on $\sigma_u^2$. Both $p(\boldsymbol{x}|\sigma_u^2)$ and $p(\sigma_u^2)$ are known from Equations \eqref{eq:likelihood_sigma} and \eqref{eq:prior_sigma}. Plugging these in gives the following probability mass function.  
+
+\begin{align*}
+  p(\boldsymbol{x}|\sigma_u^2)\cdot p(\sigma_u^2) &\propto \frac{\beta^{\alpha}}{\Gamma(\alpha)}\left( \frac{1}{\sigma_u^2} \right)^{\alpha+1}\exp\left(\frac{-\beta}{\sigma_u^2}\right) \prod_{t=2}^T \frac{1}{\sigma_u}\exp(x_t-x_{t-1})^2 \\&= \frac{\beta^{\alpha}}{\Gamma(\alpha)} \left(\frac{1}{\sigma_u^2}\right)^{\alpha + \frac{T+1}{2}} \exp\left(-\frac{1}{\sigma_u^2}\left(\beta+\frac{1}{2}\sum_{t=2}^T(x_t-x_{t-1})^2\right)\right)
+\end{align*}
+This is proportional to a inverse gamma distribution with $\alpha^*=\alpha + \frac{T-1}{2}$ and $\beta^*=\beta + \frac{1}{2}\sum_{t=2}^T(x_t-x_{t-1})^2$. 
+
+
+
+
+
+## 1d)
+
+We partition the vector $\boldsymbol{x}$ into the sets $\boldsymbol{x}_\mathcal{I},\boldsymbol{x}_{-\mathcal{I}}$ for some $\mathcal{I} \subseteq \{1,\dots,366\}$. Let $Q(\boldsymbol{x}_\mathcal{I}'|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2,\boldsymbol{y}) = p(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma^2_u)$ be the conditional prior proposal distribution in the Hastings algorithm. The acceptance probability of a step in the algorithm is given by
+$$\alpha(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2,\boldsymbol{y}) = \min\left(1,\frac{\pi(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2,\boldsymbol{y}_{\mathcal{I}}) \cdot p(\boldsymbol{x}_{\mathcal{I}}|\boldsymbol{x}_{-\mathcal{I}},\sigma^2_u)}{\pi(\boldsymbol{x}_{\mathcal{I}}|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2,\boldsymbol{y}_{\mathcal{I}})\cdot p(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma^2_u)}\right)$$
+Using the product rule, we can write the limiting distribution function $\pi(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2,\boldsymbol{y}_{\mathcal{I}})$ as
+$$p(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2,\boldsymbol{y}_{\mathcal{I}}) = \frac{p(\boldsymbol{x}_{\mathcal{I}}',\boldsymbol{y}_{\mathcal{I}}|\sigma_u^2,\boldsymbol{x}_{-\mathcal{I}})}{p(\boldsymbol{y}_{\mathcal{I}}|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2)},$$
+and similarily for the limiting distribution function $\pi(\boldsymbol{x}_{\mathcal{I}}|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2,\boldsymbol{y}_{\mathcal{I}})$. Inserting these, we find the acceptance probability
+$$\alpha(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2,\boldsymbol{y}) = \min\left(1,\frac{p(\boldsymbol{x}_{\mathcal{I}}',\boldsymbol{y}_{\mathcal{I}}|\sigma_u^2,\boldsymbol{x}_{-\mathcal{I}}) \cdot p(\boldsymbol{x}_{\mathcal{I}}|\boldsymbol{x}_{-\mathcal{I}},\sigma^2_u)}{p(\boldsymbol{x}_{\mathcal{I}},\boldsymbol{y}_{\mathcal{I}}|\sigma_u^2,\boldsymbol{x}_{-\mathcal{I}})\cdot p(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma^2_u)}\right)$$
+The product rule is again used on both expressions in the first fraction, which gives the following.  
+$$
+\alpha(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}}, \sigma_u^2,\boldsymbol{y}) = \min\left( 1,\frac{p(\boldsymbol{y}_{\mathcal{I}}|\boldsymbol{x}_{\mathcal{I}}',\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2) \cdot p(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2)}{p(\boldsymbol{y}_{\mathcal{I}}|\boldsymbol{x}_{\mathcal{I}},\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2) \cdot p(\boldsymbol{x}_{\mathcal{I}}|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2)} \cdot \frac{p(\boldsymbol{x}_{\mathcal{I}}|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2)}{p(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2)}   \right) 
+$$
+Again equal terms can be canceled out, which leaves us with the following expression.
+\begin{equation}
+\alpha(\boldsymbol{x}_{\mathcal{I}}'|\boldsymbol{x}_{-\mathcal{I}}, \sigma_u^2,\boldsymbol{y})=\min\left(1, \frac{p(\boldsymbol{y}_{\mathcal{I}}|\boldsymbol{x}_{\mathcal{I}}',\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2)}{p(\boldsymbol{y}_{\mathcal{I}}|\boldsymbol{x}_{\mathcal{I}},\boldsymbol{x}_{-\mathcal{I}},\sigma_u^2)} \right) =\min\left(1, \frac{p(\boldsymbol{y}_{\mathcal{I}}|\boldsymbol{x}_{\mathcal{I}}')}{p(\boldsymbol{y}_{\mathcal{I}}|\boldsymbol{x}_{\mathcal{I}})}\right)
+\label{eq:likelihood_ratio}
+\end{equation}
+The last equality comes from the fact that $\boldsymbol{y}_{\mathcal{I}}$ does not depend on $\boldsymbol{x}_{-\mathcal{I}}$ and $\sigma_u^2$. 
+
+
+
+## 1e
+
+Equation \eqref{eq:likelihood_sigma} can be rewritten as 
+\begin{align}
+  \label{eq:pmf_x_short}
+  p(\boldsymbol{x}|\sigma_u^2) \propto \exp \left\{  -\frac{1}{2} \boldsymbol{x}^T\mathbf{Q}\boldsymbol{x}\right\}
+\end{align}
+
+where the precision matrix $\mathbf{Q}$ is defined as 
+\begin{align*}
+  \mathbf{Q} = \frac{1}{\sigma_u^2} \begin{pmatrix}1&-1&&& \\ -1&2&-1&& \\ &&\ddots& \\ &&-1&2&-1\\ &&&-1&1\end{pmatrix}
+\end{align*}
+
+The components of $\boldsymbol{x}$ is now partitioned into two subvectors, so that
+\begin{align}
+  \label{eq:x_par}
+  \boldsymbol{x} = \begin{pmatrix}\boldsymbol{x}_A \\ \boldsymbol{x}_B\end{pmatrix}.
+\end{align}
+
+The precision matrix is partitioned in the same way giving us
+$$
+\mathbf{Q} = \begin{pmatrix}\mathbf{Q}_{AA} & \mathbf{Q}_{AB} \\ \mathbf{Q}_{BA} & \mathbf{Q}_{BB}\end{pmatrix}
+$$
+Now we want to find the distribution of $\boldsymbol{x}_A$ conditional on $\boldsymbol{x}_B$. First the new partition in Equation \eqref{eq:x_par} is inserted into Equation \eqref{eq:pmf_x_short} as shown below. 
+\begin{align}
+  p(\boldsymbol{x}_A|\boldsymbol{x}_B) &\propto p(\boldsymbol{x}) \nonumber
+  \\ &\propto \exp \left\{ -\frac{1}{2} \begin{pmatrix}\boldsymbol{x}_A^T&\boldsymbol{x}_B^T\end{pmatrix} \begin{pmatrix}\mathbf{Q}_{AA} & \mathbf{Q}_{AB} \\ \mathbf{Q}_{BA} & \mathbf{Q}_{BB}\end{pmatrix} \begin{pmatrix}\boldsymbol{x}_A\\\boldsymbol{x}_B\end{pmatrix} \right\}  \nonumber
+  \\ &\propto \exp\left\{ -\frac{1}{2} (\boldsymbol{x}_A^T\mathbf{Q}_{AA}\boldsymbol{x}_A + \boldsymbol{x}_A^T\mathbf{Q}_{AB}\boldsymbol{x}_B + \boldsymbol{x}_B^T\mathbf{Q}_{BA}\boldsymbol{x}_A) \right\}  \label{eq:MVN1}
+\end{align}
+In the last step, all the expressions not dependent on $\boldsymbol{x}_A$ are removed.
+
+We want an expression on the form
+
+$$\exp \left(-\frac{1}{2}\left((\boldsymbol{x}_A-\mu_{A|B})^T\mathbf{Q}_{A|B}(\boldsymbol{x}_A-\mu_{A|B})\right)\right)$$
+\begin{equation}
+\propto \exp \left(-\frac{1}{2}\left(\boldsymbol{x}_A^T\mathbf{Q}_{A|B}\boldsymbol{x}_A - \mu_{A|B}^T\mathbf{Q}_{A|B}\boldsymbol{x}_A- \boldsymbol{x}_B^T\mathbf{Q}_{A|B}\mu_{A|B}  \right)\right)
+\label{MVN2}
+\end{equation}
+Equating the coefficients in Equation \eqref{eq:MVN1} and Equation \eqref{MVN2}, we obtain the following results:
+\begin{align*} \mathbf{Q}_{A|B} = \mathbf{Q}_{AA},  \\ -\mathbf{Q}_{A|B}\mu_{A|B} = \mathbf{Q}_{AB}\boldsymbol{x}_B \implies \mu_{A|B} = -\mathbf{Q}_{AA}^{-1}\mathbf{Q}_{AB}\boldsymbol{x}_B\end{align*}
+Hence, the conditional $\boldsymbol{x}_A|\boldsymbol{x}_B$ follows a Gaussian distribution with expected value $\mu_{A|B} = -\mathbf{Q}_{AA}^{-1}\mathbf{Q}_{AB}\boldsymbol{x}_B$ and precision matrix $\mathbf{Q}_{A|B} = \mathbf{Q}_{AA}$. 
+
+
+
+## 1f)
+We note that if the partitioning of $\boldsymbol{x} = (x_1,\dots,x_T)^T$ in Equation \eqref{eq:x_par} is such that $\boldsymbol{x}_\mathcal{I}$ is only one element, then the mean in the conditional Gaussian distribution becomes
+$$\mu_{\mathcal{I}|-\mathcal{I}} = \begin{cases}x_2,\quad \mathcal{I} = 1 \\ (x_{\mathcal{I}-1}+x_{\mathcal{I}+1})/2,\quad \mathcal{I} \in \{2,\dots,T-1\} \\ x_{T-1},\quad \mathcal{I} = T\end{cases}$$
+and the variance becomes
+$$\Sigma_{\mathcal{I}|-\mathcal{I}} = \begin{cases}\sigma_u^2,\quad \mathcal{I} = 1 \\ 
+\sigma_u^2/2, \quad \mathcal{I} \in \{2,\dots,T-1\} \\ \sigma_u^2,\quad \mathcal{I} = T\end{cases}$$
+
+In addition, we note that the ratio of likelihoods found in Equation \ref{eq:likelihood_ratio} can be rewritten as
+\begin{align*}\frac{p(\boldsymbol{y}_{t}|\boldsymbol{x}_{t}')}{p(\boldsymbol{y}_{t}|\boldsymbol{x}_{t})} = \frac{\exp(\sum_t\ln({n_t\choose y_t|x_t'}))-n_tx_t'+y_tx_t'-n_t\ln(1+\exp(-x_t'))}{\exp(\sum_t\ln({n_t\choose y_t|x_t}))-n_tx_t+y_tx_t-n_t\ln(1+\exp(-x_t))} \\ = \exp\left(\sum_t (n_t-y_t)(x_t-x_t') + n_t\ln\left(\frac{1+\exp(-x_t)}{1+\exp(-x_t')}\right)\right),\end{align*}
+which we will exploit in the following implementation. We implement a MCMC sampler with a Metropolis-Hastings step for the individual $x_t$-parameters and Gibbs steps for $\sigma_u^2$. The prior on $\sigma_u^2$ uses $\alpha = 2$ and $\beta = 0.05$ as parameters, and we perform $N = 50000$ iterations. 
+
+```{r}
+sample_sigma <- function(x){
+  #Function to sample sigma^2 from the inverse gamma
+  #distribution. Uses Gibbs sampling (acceptance probability 1)
+  alpha <- 2
+  beta <- 0.05
+
+  a <- alpha + (length(x)-1)/2
+  b <- beta + 0.5*sum(diff(x)^2)
+
+  return (1/rgamma(1,shape = a,rate = b))
+}
+
+sample_proposal <- function(x,idx,sigma){
+  if (idx == 1){
+    return (rnorm(1,mean = x[idx+1],sd = sqrt(sigma)))
+  }
+  else if (idx == length(x)){
+    return (rnorm(1,mean = x[idx-1],sd = sqrt(sigma)))
+  }
+  else{
+    return (rnorm(1,mean = (x[idx-1]+x[idx+1])*0.5,sd = sqrt(sigma/2)))
+  }
+}
+
+loglik_ratio <- function(x,prop,y,n){
+  #Ratio of the log-likelihoods of the binomial distribution..
+  return ((n-y) * (x-prop) + n * log((1+exp(-x))/(1+exp(-prop))))
+}
+
+sampler <- function(iter){
+  #MCMC sampler.
+  t <- proc.time()[3]
+  end <- 366
+  x <- rnorm(end)
+
+  states <- matrix(NA, nrow = iter,ncol = end)
+  states[1,] <- x
+  sigmas <- numeric(iter)
+  sigma <- 0.05
+  sigmas[1] <- sigma
+
+  acceptance_rate <- 0
+  for (i in 2:iter){
+    unifs <- runif(end)
+
+    for (j in 1:end){ #Could be implemented using vectors only
+      proposals <- sample_proposal(x,j,sigma)
+
+      accept <- min(1,exp(loglik_ratio(x[j],proposals,rain$n.rain[j],rain$n.years[j])))
+
+      if (unifs[j] < accept){ #Change state
+        x[j] <- proposals
+        states[i,j] <- proposals
+      }
+      else{ #Keep previous state
+        x[j] <- states[i-1,j]
+        states[i,j] <- states[i-1,j]
+      }
+      acceptance_rate <- acceptance_rate + accept
+    }
+    x <- states[i,]
+    sigma <- sample_sigma(x)
+    sigmas[i] <- sigma
+  }
+
+  return (list(x = states,sigma = sigmas,
+               runtime = proc.time()[3]-t,
+               accept_rate = acceptance_rate/(iter*end)))
+}
+```
+
+```{r trace_plots,fig.cap='Traceplots', out.width='.49\\linewidth', fig.subcap = c("","","",""),fig.asp=1, fig.ncol = 2,echo = T}
+N = 50000
+
+MC <- sampler(N)
+
+pi_1 <- inv.logit(MC$x[,1])
+pi_201 <- inv.logit(MC$x[,201])
+pi_366 <- inv.logit(MC$x[,366])
+#Traceplots
+
+plot(1:N,pi_1,type = "l",xlab = "Iterations", ylab = expression(x[1]))
+plot(1:N,pi_201,type = "l",xlab = "Iterations", ylab = expression(x[201]))
+plot(1:N,pi_366,type = "l",xlab = "Iterations", ylab = expression(x[366]))
+plot(1:N,MC$sigma,type = "l",xlab = "Iterations", ylab = expression(sigma[u]^2))
+```
+All the traceplots in Figure \ref{fig:trace_plots} indicate that the Markov chain has converged. In fact, the Markov chains seem to converge very fast, which leads us to assume that a burn-in period of $1000$ iterations should be more than sufficient. 
+
+```{r histograms,fig.cap='Histograms',fig.subcap = c("","","",""), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = T}
+hist(pi_1,freq = F,breaks = 100,xlab = expression(x[1]),main = "",col = "lightblue")
+hist(pi_201,freq = F,breaks = 100,xlab = expression(x[201]),main = "",col = "lightblue")
+hist(pi_366,freq = F,breaks = 100,xlab = expression(x[366]),main = "",col = "lightblue")
+hist(MC$sigma,freq = F,breaks = 1000,xlab = expression(sigma[u]^2),main = "",
+     col = "lightblue",xlim = c(0,0.05))
+```
+In Figure \ref{fig:histograms}, we see the histograms, i.e. the estimated posterior distributions for $\pi(x_1)$ in (a), $\pi(x_{201})$ in (b),  $\pi(x_{366})$ in (c) and $\sigma_u^2$ in (d). 
+```{r acfs,fig.cap='Autocorrelation plots', fig.subcap = c("","","",""),out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = T}
+acf(pi_1,lag.max = 70,main = "",ylab = expression("ACF, "~pi[1]))
+acf(pi_201,lag.max = 70,main = "",ylab = expression("ACF, "~x[201]))
+acf(pi_366,lag.max = 70,main = "",ylab = expression("ACF, "~x[366]))
+acf(MC$sigma,lag.max = 80,main = "",ylab = expression("ACF, "~sigma[u]^2))
+```
+In Figure \ref{fig:acfs}, we see the autocorrelation function for each of the chosen parameters. After lag 80, all the plots show that there are no more significant spikes. We can interpret this as an indication that the Markov chain has converged, however the ACF plot should be interpreted in relation to other diagnostics as well.
+
+
+```{r}
+cat("The procedure used ", MC$runtime, " seconds, and had an average acceptance probability of "
+    , MC$accept_rate, "%. \n")
+```
+
+
+We calculate the central estimates and $95\%$ credible intervals.
+```{r}
+sigma <- c(mean(MC$sigma), quantile(MC$sigma, probs=c(0.025, 0.975)))
+pi_1 <- c(mean(pi_1), quantile(pi_1, probs=c(0.025, 0.975)))
+pi_201 <- c(mean(pi_201), quantile(pi_201, probs=c(0.025, 0.975)))
+pi_366 <- c(mean(pi_366), quantile(pi_366, probs=c(0.025, 0.975)))
+
+df <- data.frame(sigma=sigma, pi_1=pi_1, pi_201=pi_201, pi_366=pi_366)
+rownames(df) <- c("Mean", "2.5%", "97.5%")
+print(t(df))
+```
+
+
+We calculate the posterior mean $\pi(x_t)$ as a function of $t$, with $95\%$ credible limits, and plot this against the observed $y_t/n_t$. We use a burn-in period of $1000$ iterations. 
+```{r posterior_mean, fig.cap = "The posterior mean with credible intervals and the data.",out.width='.7\\linewidth',fig.align = "center"}
+CI <- function(x){
+  pi <- inv.logit(x)
+  means <- colMeans(pi)
+  ci <- colQuantiles(pi, probs = c(0.025,0.975))  # returns 95% interval
+  return(list(mean=means, ci=ci))
+}
+
+
+burn <- 1000
+sample <- MC$x[burn:N,]
+MC_pi <- CI(sample)
+
+plot(rain$day, rain$n.rain/rain$n.years, type="l", col="darkgray", ylim=c(0,0.8),
+     ylab=expression(pi(x[t])), xlab="t", cex.axis=1.2, cex.lab=1.5)
+lines(rain$day, MC_pi$ci[,1], col="red", lty=1, lwd=2)
+lines(rain$day, MC_pi$ci[,2], col="red", lty=1, lwd=2)
+lines(rain$day, MC_pi$mean, col="blue", lwd=2)
+legend("topright", inset=0.01, legend=c("Observed", "MCMC", "90% CI - MCMC"), 
+       col=c("darkgray", "blue", "red"), lwd=2, box.lty = 0)
+```
+In Figure \ref{fig:posterior_mean}, we see that the MCMC algorithm captures the trend in the data well. The posterior mean $\pi(x_t)$ has a smoothing effect on the data, and most of the data points lie within the $95\%$ credible interval. 
+
+
+
+
+
+## 1g) 
+We repeat the previous exercise, but this time we allow for the partitioning of $\boldsymbol{x}$ into $\boldsymbol{x}_{\mathcal{I}}$ to contain more than one element, that is, we use the conditional prior proposal $p(\boldsymbol{x}_{(a,b)}|\boldsymbol{x}_{-(a,b)},\sigma_u^2)$, where $(a,b)$ defines an interval of length $M$. The main difference here is that we can no longer use any shortcut in the calculation of the mean and variance of the proposal distribution. The implementation of the block step-MCMC sampler is shown below.
+```{r}
+sampler_block <- function(M,iter){
+  t <- proc.time()[3]
+  end <- 366
+  Q <- tridiag(rep(-1,(end-1)),rep(-1,(end-1)),c(1,rep(2,end-2),1))
+
+  last_block_size <- end %% M
+  number_of_blocks <- floor(366/M)
+
+  Q_AA_start <- Q[1:M,1:M]
+  Q_AA_start_inv <- solve(Q_AA_start)
+  Q_AA <- Q[2:(M+1),2:(M+1)]
+  Q_AA_inv <- solve(Q_AA)
+  Q_AA_end <- Q[(end-last_block_size+1):end,(end-last_block_size+1):end]
+  Q_AA_end_inv <- solve(Q_AA_end)
+
+  Q_AB_start <- Q[1:M,(M+1):end]
+  Q_AB_end <- Q[(end-last_block_size+1):end,1:(end-last_block_size)]
+
+  x <- rnorm(end)
+
+  states <- matrix(NA, nrow = iter,ncol = end)
+  states[1,] <- x
+  sigmas <- numeric(iter-1)
+  acceptance_rate <- 0
+
+  for (i in 2:iter){
+    sigma <- sample_sigma(x)
+    sigmas[i-1] <- sigma
+    unifs <- runif(number_of_blocks+1)
+
+    #Handle first case
+    proposals <- mvrnorm(1,mu = -Q_AA_start_inv %*% Q_AB_start %*% 
+                           x[-(1:M)], Sigma = Q_AA_start_inv*sigma)
+    ratio <- exp(sum(loglik_ratio(x[1:M],proposals,
+                                  rain$n.rain[1:M],rain$n.years[1:M])))
+    accept_samples <- unifs[1] < min(1,ratio)
+    acceptance_rate <- acceptance_rate + accept_samples*M
+    states[i,1:M] <- proposals*accept_samples + states[i-1,1:M]*!accept_samples
+    x[1:M] <- states[i,1:M]
+
+    for (j in 1:(number_of_blocks-1)){ #Handle middle cases
+      proposals <- mvrnorm(1,mu = -Q_AA_inv %*% 
+                             Q[(j*M+1):(j*M+M),c(1:(j*M),(j*M+M+1):end)] %*% 
+                             x[-((j*M+1):(j*M+M))],
+                           Sigma = Q_AA_inv*sigma)
+      ratio <- exp(sum(loglik_ratio(x[(j*M+1):(j*M+M)],proposals,
+                                    rain$n.rain[(j*M+1):(j*M+M)],
+                                    rain$n.years[(j*M+1):(j*M+M)])))
+      accept_samples <- unifs[j+1] < min(1,ratio)
+      acceptance_rate <- acceptance_rate + accept_samples*M
+      states[i,(j*M+1):(j*M+M)] <- proposals*accept_samples + 
+        states[i-1,(j*M+1):(j*M+M)]*!accept_samples
+      x[(j*M+1):(j*M+M)] <- states[i,(j*M+1):(j*M+M)]
+    }
+
+    #Handle last case
+    proposals <- mvrnorm(1, mu = -Q_AA_end_inv %*% Q_AB_end %*%
+                           x[1:(end-last_block_size)],
+                         Sigma = Q_AA_end_inv*sigma)
+    ratio <- exp(sum(loglik_ratio(x[(end-last_block_size+1):end],proposals,
+                                  rain$n.rain[(end-last_block_size+1):end],
+                                  rain$n.years[(end-last_block_size+1):end])))                       
+    accept_samples <- unifs[number_of_blocks+1] < min(1,ratio)
+    acceptance_rate <- acceptance_rate + last_block_size*accept_samples
+
+    states[i,(end-last_block_size+1):end] <- proposals*accept_samples + 
+      states[i-1,(end-last_block_size+1):end]*!accept_samples
+
+    x[(end-last_block_size+1):end] <- states[i,(end-last_block_size+1):end]
+
+  }
+
+  return (list(x = states,sigma = sigmas,runtime = proc.time()[3] - t,
+               accept_rate = acceptance_rate/(iter*end)))
+}
+```
+
+We must make a choice of $M$, the size of each block step. We therefore run the algorithm for different values of $M$, and calculate the runtime and average acceptance probability of each run. Note that we here use only $N = 5000$ iterations due to runtime issues, so some of the Markov Chains may not converge. 
+```{r find_M, fig.cap = "Acceptance probability (a) and runtime (b) as functions of the block size M.",fig.subcap = c("",""),fig.asp=1, fig.ncol = 2,echo = T,eval = T,out.width='.49\\linewidth'}
+#Test different values of M
+M = c(5,10,15,20,25,30,40,50) #For the final run
+
+accept_vals <- numeric(length = length(M))
+runtime <- numeric(length = length(M))
+a <- numeric(length = length(M))
+for (i in 1:length(M)){
+  MC_block <- sampler_block(M[i],5000)
+  accept_vals[i] <- MC_block$accept_rate
+  runtime[i] <- MC_block$runtime
+}
+
+plot(M,accept_vals,ylab = "Acceptance probability",type = "b")
+plot(M,runtime,ylab = "Runtime",type = "b")
+```
+In Figure \ref{fig:find_M}We see that the acceptance probability decreases with increasing $M$, and that the runtime decreases with increasing $M$ up to about $M = 25$, where the runtime starts to increase. We therefore use $M = 15$, which has an approximate acceptance probability of $0.29$. 
+
+Below, we run the algorithm with $M = 15$ for $N = 50000$ iterations.
+```{r trace_plots2,fig.cap='Traceplots', out.width='.49\\linewidth', fig.subcap = c("","","",""),fig.asp=1, fig.ncol = 2,echo = T}
+#Choose M = 15
+M <- 15
+N <- 50000
+MC_block <- sampler_block(M,N)
+
+pi_1 <- inv.logit(MC_block$x[,1])
+pi_201 <- inv.logit(MC_block$x[,201])
+pi_366 <- inv.logit(MC_block$x[,366])
+
+#Traceplots
+plot(1:N,pi_1,type = "l",xlab = "Iterations", ylab = expression(x[1]))
+plot(1:N,pi_201,type = "l",xlab = "Iterations", ylab = expression(x[201]))
+plot(1:N,pi_366,type = "l",xlab = "Iterations", ylab = expression(x[366]))
+plot(1:(N-1),MC_block$sigma,type = "l",xlab = "Iterations", ylab = expression(sigma[u]^2),ylim = c(0,0.5))
+```
+The traceplots in Figure \ref{fig:trace_plots2} indicate that the chosen components of $\boldsymbol{x}$ and $\sigma_u^2$ have converged. 
+```{r histograms2,fig.cap='Histograms',fig.subcap = c("","","",""), out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = T}
+hist(pi_1,freq = F,breaks = 500,xlab = expression(x[1]),main = "",col = "lightblue")
+hist(pi_201,freq = F,breaks = 500,xlab = expression(x[201]),main = "",col = "lightblue")
+hist(pi_366,freq = F,breaks = 500,xlab = expression(x[366]),main = "",col = "lightblue")
+hist(MC_block$sigma,freq = F,breaks = 1000,xlab = expression(sigma[u]^2),main = "",col = "lightblue",xlim = c(0,0.1))
+```
+In Figure \ref{fig:histograms2}, we see the posterior distributions.
+```{r acfs2,fig.cap='Autocorrelation plots', fig.subcap = c("","","",""),out.width='.49\\linewidth', fig.asp=1, fig.ncol = 2,echo = T}
+acf(pi_1,lag.max = 80,main = "",ylab = expression("ACF, "~pi[1]))
+acf(pi_201,lag.max = 120,main = "",ylab = expression("ACF, "~x[201]))
+acf(pi_366,lag.max = 60,main = "",ylab = expression("ACF, "~x[366]))
+acf(MC_block$sigma,lag.max = 200,main = "",ylab = expression("ACF, "~sigma[u]^2))
+```
+In Figure \ref{fig:acfs2}, we see that the autocorrelation becomes insignificant after $200$ iterations, which indicates that a burn-in period of $1000$ iterations should again be enough. 
+```{r}
+cat("The procedure used ", MC_block$runtime, " seconds, and had an average acceptance probability of ", MC_block$accept_rate, "%. \n")
+```
+
+
+We calculate the central estimates and $95\%$ credible intervals for $\pi(x_1),\pi(x_{201}),\pi(x_{366}),$ and $\sigma_u^2$. 
+```{r}
+sigma <- c(mean(MC_block$sigma), quantile(MC_block$sigma, probs=c(0.025, 0.975)))
+pi_1 <- c(mean(pi_1), quantile(pi_1, probs=c(0.025, 0.975)))
+pi_201 <- c(mean(pi_201), quantile(pi_201, probs=c(0.025, 0.975)))
+pi_366 <- c(mean(pi_366), quantile(pi_366, probs=c(0.025, 0.975)))
+
+df <- data.frame(sigma=sigma, pi_1=pi_1, pi_201=pi_201, pi_366=pi_366)
+rownames(df) <- c("Mean", "2.5%", "97.5%")
+print(t(df))
+```
+
+
+We calculate the posterior mean $\pi(x_t)$ as a function of $t$, with $95\%$ credible limits. This can be seen in Figure \ref{fig:block} along with the observed $y_t/n_t$. 
+```{r block, fig.cap = "The posterior mean with credible intervals and the data.",out.width='.7\\linewidth',fig.align = "center"}
+burn <- 1000
+sample <- MC_block$x[burn:N,]
+MC_block_pi <- CI(sample)
+
+plot(rain$day, rain$n.rain/rain$n.years, type="l", col="darkgray", ylim=c(0,0.8),
+     ylab=expression(pi(x[t])), xlab="t", cex.axis=1.2, cex.lab=1.5)
+lines(rain$day, MC_block_pi$ci[,1], col="red", lty=1, lwd=2)
+lines(rain$day, MC_block_pi$ci[,2], col="red", lty=1, lwd=2)
+lines(rain$day, MC_block_pi$mean, col="blue", lwd=2)
+legend("topright", inset=0.01, legend=c("Observed", "MCMC", "90% CI - MCMC"), 
+       col=c("darkgray", "blue", "red"), lwd=2, box.lty = 0)
+```
+
+
+
+# Problem 2
+For this part INLA is used instead of MCMC. We want to fit the same model as in Problem 1, but by using INLA instead we expect a much faster computation time. 
+```{r}
+#opt <- options()
+#options(pkgType="both")
+#options(opt)  ## switch back to old options
+#install.packages("INLA",repos=c(getOption("repos"),
+#  INLA="https://inla.r-inla-download.org/R/stable"), type="binary", dep=TRUE)
+
+```
+
+
+## 2a)
+First we have to make sure the same model is fitted as when using MCMC. The INLA method places a prior on the logarithmic precision rather than the variance. This gives us the following  hyperparameter
+\begin{align*}
+  \theta = \log\left(\frac{1}{\sigma_u^2}\right)
+\end{align*}
+Since $\sigma_u^2$ has a inverse gamma distribution, the hyperparameter $\theta$ gets the following distribution
+\begin{align*}
+  \theta \sim \text{log-gamma}(\alpha, \beta)
+\end{align*}
+where $\alpha=2$ and $\beta=0.05$. Simplified Laplace is used as the approximation strategy, and \texttt{ccd} is used as the integration strategy. The intercept is also removed in this model. The INLA model is fitted below, and we refer to it later as Model 1. 
+```{r}
+control.inla = list(strategy="simplified.laplace", int.strategy="ccd")
+
+alpha <- 2
+beta <- 0.05
+
+time <- proc.time()[3]
+mod1 <- inla(n.rain ~ -1 + f(day, model="rw1", constr=FALSE,
+                            hyper=list(prec=list(prior="loggamma", param=c(alpha,beta))) ), 
+            data=rain, Ntrials=n.years, control.compute=list(config = TRUE),
+            family="binomial", verbose=TRUE, control.inla=control.inla)
+time <- proc.time()[3] - time
+cat("Computational time: ", time)
+```
+We see from the computation time, this method is far more efficient than the one used in Problem 1. But what about the results?
+Next the INLA model is compared to the MCMC models created before. Figure \ref{fig:INLAvsMCMC} shows the mean prediction of $\boldsymbol{\pi}$ and a $95\%$ credible interval for both the MCMC models compared to the INLA model. 
+```{r INLAvsMCMC,fig.cap='Comparing INLA to MCMC', out.width='.49\\linewidth', fig.subcap = c("INLA vs MCMC","INLA vs block-MCMC"), fig.ncol = 2,echo = T}
+# Plotting INLA vs MC
+par(pty="m")
+# Data
+plot(rain$day, rain$n.rain/rain$n.years, type="l", col="darkgrey", lwd=2,
+     xlab="t", ylab=expression(pi[t]), ylim=c(0,0.8), cex.axis=1.2, cex.lab=1.5)
+# MCMC from 1f)
+lines(rain$day, MC_pi$mean, col="green", lwd=2)
+lines(rain$day, MC_pi$ci[,1], col="cyan", lwd=2)
+lines(rain$day, MC_pi$ci[,2], col="cyan", lwd=2)
+#INLA
+lines(mod1$summary.fitted.values$mean, col="red", lwd=2, lty=2)
+lines(mod1$summary.fitted.values$`0.025quant`, col="blue", lwd=2, lty=2)
+lines(mod1$summary.fitted.values$`0.975quant`, col="blue", lwd=2, lty=2)
+legend("topright", inset=0.01, 
+       legend=c("Observation", "INLA", "90% CI - INLA", "MCMC", "90% CI - MCMC"), 
+       col=c("darkgray", "red", "blue", "green", "cyan"), lty=c(1,2,2,1,1), 
+       lwd=2, box.lty = 0)
+
+
+
+# Plotting INLA vs MC_block
+par(pty="m")
+# Data
+plot(rain$day, rain$n.rain/rain$n.years, type="l", col="darkgrey", lwd=2,
+     xlab="t", ylab=expression(pi[t]), ylim=c(0,0.8), cex.axis=1.2, cex.lab=1.5)
+# MCMC from 1g)
+lines(rain$day, MC_block_pi$mean, col="green", lwd=2)
+lines(rain$day, MC_block_pi$ci[,1], col="cyan", lwd=2)
+lines(rain$day, MC_block_pi$ci[,2], col="cyan", lwd=2)
+#INLA
+lines(mod1$summary.fitted.values$mean, col="red", lwd=2, lty=2)
+lines(mod1$summary.fitted.values$`0.025quant`, col="blue", lwd=2, lty=2)
+lines(mod1$summary.fitted.values$`0.975quant`, col="blue", lwd=2, lty=2)
+legend("topright", inset=0.01, 
+       legend=c("Observation", "INLA", "90% CI - INLA", "MCMC", "90% CI - MCMC"), 
+       col=c("darkgray", "red", "blue", "green", "cyan"), lty=c(1,2,2,1,1), 
+       lwd=2, box.lty = 0)
+```
+Looking at the plots the methods are almost indistinguishable from each other. Below the estimated $\sigma_u^2$ value given by the INLA method is printed. 
+```{r}
+sigma_inla <- 1/(mod1$summary.hyperpar$mean)
+print(sigma_inla)
+```
+This is $\sim0.0007$ away from the estimate given from the MCMC methods. 
+This means the major difference between the methods is the run time, which is much faster when using INLA. INLA would therefor be the preferred method to use.  
+
+
+
+
+
+## 2b)
+Now to test the robustness of the INLA method. This is done by checking all the possible approximation and integration strategies, and comparing the results. The approximation strategies tested is \texttt{gaussian}, \texttt{simplified.laplace}, \texttt{laplace} and \texttt{adaptive}. The integration strategies tested are \texttt{ccd}, \texttt{grid} and \texttt{eb}. The plot of all the different combinations can be seen in Figure \ref{fig:robustness}. 
+```{r robustness, out.width='.7\\linewidth', fig.cap='Comparing different approximation and integration strategies using INLA', fig.align='center'}
+test_control <- function(){
+  alpha=2
+  beta=0.05
+  strats <- c("gaussian", "simplified.laplace", "laplace", "adaptive")
+  int.strats <- c("ccd", "grid", "eb")
+
+  times <- matrix(nrow=length(strats), ncol=length(int.strats))
+  colnames(times) <- int.strats
+  rownames(times) <- strats
+
+  plot(rain$day, rain$n.rain/rain$n.years, type="l", col="white", xlab="t",
+       ylab=expression(pi[t]), ylim=c(0,0.6), cex.axis=1.2, cex.lab=1.5, lwd=2.5)
+
+  for (i in 1:length(strats)) {
+    for (j in 1:length(int.strats)) {
+      control.inla = list(strategy=strats[i], int.strategy=int.strats[j])
+      time <- proc.time()[3]
+      mod <- inla(n.rain ~ -1 + f(day, model="rw1", constr=FALSE,
+                                  hyper=list(prec=list(prior="loggamma", param=c(alpha,beta))) ),
+                  data=rain, Ntrials=n.years, control.compute=list(config = TRUE),
+                  family="binomial", verbose=TRUE, control.inla=control.inla)
+      times[i,j] <-  proc.time()[3] - time
+
+      lines(mod$summary.fitted.values$mean, col=i*j, lwd=2)
+    }
+  }
+  return(times)  
+}
+
+test <- test_control()
+```
+The simulations are so similar they are indistinguishable by eye. This indicates that the INLA method is very robust regardless of strategy. 
+```{r}
+print(test)
+```
+The run time for all the different combinations can be seen above. There is no considerable difference between the run times.
+
+Taking into account both the plots of the simulations and the fast run times, the INLA method can be considered very robust when considering the \texttt{control.inla} parameters. 
+
+
+## 2c)
+Now a new INLA model is considered. The intercept is now kept and the \texttt{constr} parameter in \texttt{f} is now set to be \texttt{TRUE}. When including the intercept the response is now given by
+\begin{align*}
+  y_t|\tau_t \sim \text{Bin}(n_t,\pi(\tau_t))
+\end{align*}
+where $\tau_t = \beta_0 + x_t$ and $\beta_0$ is the intercept. 
+Setting \texttt{constr=TRUE} means there is now a sum to zero constraint. This model will be referred to as Model 2. Model 1 and Model 2 can be seen in Figure \ref{fig:1vs2}
+```{r 1vs2, out.width='.7\\linewidth', fig.cap='Comparing Model 1 (without intercept and sum to zero contraint) to Model 2 (with intercept and sum to zero constraint).', fig.align='center'}
+control.inla = list(strategy="simplified.laplace", int.strategy="ccd")
+mod2 <- inla(n.rain ~ f(day, model="rw1", constr=TRUE,
+                        hyper=list(prec=list(prior="loggamma", param=c(alpha,beta)))),
+             data=rain, Ntrials=n.years, control.compute=list(config = TRUE),
+             family="binomial", verbose=TRUE,control.inla=control.inla)
+
+plot(rain$day, rain$n.rain/rain$n.years, type="l", col="darkgray", lwd=2,
+     xlab="t", ylab=expression(pi[t]), ylim=c(0,0.7), cex.axis=1.2, cex.lab=1.5)
+lines(rain$day, mod1$summary.fitted.values$mean, col="red", lwd=2.5)
+lines(rain$day, mod2$summary.fitted.values$mean, col="blue", lwd=2.5)
+legend("topright", inset=0.01, legend=c("Observation","Model 1", "Model 2"),
+       col=c("darkgray","red", "blue"), lwd=2, box.lty = 0)
+```
+Looking at the plot is does not seem to be any major difference between the two models. 
+
+To conclude, using INLA is more efficient than the MCMC. 
+
+
+
+
+
+## Problem 3
+We implement the same model as in part 1 and 2, only now using the R-package $\texttt{RTMB}$. We begin by computing the joint likelihood $\pi(\boldsymbol{y},\boldsymbol{x}|\sigma_u^2)$, which we can write as
+$$\pi(\boldsymbol{y},\boldsymbol{x}|\sigma_u^2) = p(\boldsymbol{y}|\boldsymbol{x})\cdot p(\boldsymbol{x}|\sigma_u^2),$$
+where we have seen the terms on the right hand side in Equation \eqref{eq:likelihood_sigma} and Equation \eqref{likelihood1}. We implement the negative log-likelihood function with parameters $\sigma,\mathbf{x}$ in the code block below.
+```{r}
+library(RTMB)
+parameters <- list(sigma = 1,x = rep(0,366))
+
+f <- function(params){
+  getAll(params, warn = FALSE)
+  y <- OBS(rain$n.rain)
+  
+  p <- 1/(1+exp(-x))
+  ll <- sum(dbinom(y,rain$n.years,p,log = T))
+  ll <- ll + sum(-log(sigma) - (1/(2*sigma^2)) * diff(x)^2)
+  n_ll <- -ll
+  return (n_ll)
+}
+```
+The RTMB method approximates the marginal likelihood $\pi(\boldsymbol{y}|\sigma_u^2)$ using the Laplace approximation in the integral $\pi(\boldsymbol{y}|\sigma_u^2) = \int \pi(\boldsymbol{y},\boldsymbol{x}|\sigma_u^2)d\boldsymbol{x}$. We use the $\texttt{MakeADFun}$ function to do this for us. This function can then be optimised w.r.t. $\sigma_u^2$ to find the maximum likelihood estimate. The implementation is shown below.
+```{r}
+obj <- MakeADFun(func = f, parameters = parameters,random = c("x"))
+
+est <- nlminb(obj$par,obj$fn,obj$gr)
+cat("The maximum likelihood estimate for sigma^2 is: ",est$par^2)
+```
+We see that the parameter estimate for $\sigma_u^2$ is $0.00696$. In part 1, the 95% credible intervals from the MCMC method were found to be $[0.00594,0.0164]$, so the new parameter estimate lies within this interval. 
+
